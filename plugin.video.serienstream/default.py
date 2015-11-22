@@ -108,8 +108,9 @@ def play(url, name):
     match = re.compile('<i class="icon .+?"></i>\n\s+(.+?)\s+<a href="(.+?)"\n\s+target="_blank">').findall(html)
     sources = []
     for host, videopage in match:
-        redirect = REDIRECT(videopage)
-        sources.append(urlresolver.HostedMediaFile(url=redirect, title=host))
+        if host != 'Vivo' and host != 'FileNuke' and host != 'CloudTime' and host != 'PowerWatch':
+            redirect = REDIRECT(videopage)
+            sources.append(urlresolver.HostedMediaFile(url=redirect, title=host))
 
     if (len(sources)==0):
         xbmc.executebuiltin("XBMC.Notification(Sorry!,Show doesn't have playable links,5000)")
@@ -122,7 +123,7 @@ def play(url, name):
             return
         playlist = xbmc.PlayList(xbmc.PLAYLIST_VIDEO)
         playlist.clear()
-        listitem = xbmcgui.ListItem("foo")
+        listitem = xbmcgui.ListItem(name)
         listitem.setPath(stream_url)
         #listitem.setInfo('video', {'Title': mname, 'Plot': descs} )
         playlist.add(stream_url,listitem)
