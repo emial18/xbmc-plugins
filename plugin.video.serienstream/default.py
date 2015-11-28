@@ -35,18 +35,15 @@ def REDIRECT(url):
     return redirect
 
 def getIndex():
-    for char in string.ascii_uppercase:
-        item = xbmcgui.ListItem(char)
-        uri = sys.argv[0] + '?mode=CATALOG' + '&url=http://serienstream.to/katalog/' + char
+    html = GET('http://serienstream.to/serien')
+    match = re.compile('<li><a href="(http://serienstream.to/genre/.+?)">(.+?)</a>').findall(html)
+    for url, category in match:
+        item = xbmcgui.ListItem(category)
+        uri = sys.argv[0] + '?mode=CATEGORY' + '&url=' + url
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
-
-    item = xbmcgui.ListItem('0-9')
-    uri = sys.argv[0] + '?mode=CATALOG' + '&url=http://serienstream.to/katalog/0-9'
-    xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
-
     xbmcplugin.endOfDirectory(pluginhandle, True)
 
-def getCatalog(url):
+def getCategory(url):
     print "getCatalog: " + url
     html = GET(url)
     soup = BeautifulSoup.BeautifulSoup(html)
@@ -171,8 +168,8 @@ try:
     url=urllib.unquote_plus(params['url'])
 except: pass
 
-if mode == 'CATALOG':
-    getCatalog(url)
+if mode == 'CATEGORY':
+    getCategory(url)
 if mode == 'SERIES':
     getSeries(url, img)
 if mode == 'SEASON':
