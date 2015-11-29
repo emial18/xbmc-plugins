@@ -6,10 +6,8 @@ import xbmc, xbmcplugin,xbmcgui,xbmcaddon
 
 sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.urlresolver').getAddonInfo( 'path' ), 'lib') )
 sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.t0mm0.common').getAddonInfo( 'path' ), 'lib') )
-sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.beautifulsoup').getAddonInfo( 'path' ), 'lib') )
 
 import urlresolver
-import BeautifulSoup
 
 headers  = {
     'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1) ; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; .NET4.0C)'
@@ -46,21 +44,13 @@ def getIndex():
 def getCategory(url):
     print "getCatalog: " + url
     html = GET(url)
-    soup = BeautifulSoup.BeautifulSoup(html)
-    series = soup.find('ul', attrs = { 'class': 'search_box_list' })
-    for elem in series.findAll('li'):
-        link = elem.find('a')['href']
-        item = xbmcgui.ListItem(str(elem.find('h3')).replace('<h3>','').replace('</h3>',''))
-        img = elem.find('img')['src']
+    match = re.compile('<a href="(http://serienstream.to/serie/stream/.+?)".+?<img.+?src="(.+?)".+?<h3>(.+?)</h3>', re.DOTALL).findall(html)
+    for link, img, title in match:
+        item = xbmcgui.ListItem(title)
         item.setIconImage(img)
         uri = sys.argv[0] + '?mode=SERIES' + '&url=' + link + "&img=" + img
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
-
-def addSeriesMetadata(url, item):
-    print "addSeriesMetadata: " + url
-    html = GET(url)
-    print "match: " , match
 
 def getSeries(url, img):
     print "getSeries: " + url
@@ -86,17 +76,16 @@ def getSeries(url, img):
 def getSeason(url, season, img):
     print "getSeason: " + url + " Season: " + season
     html = GET(url)
-    soup = BeautifulSoup.BeautifulSoup(html)
-    series = soup.find('table', attrs = { 'class': 'seasonEpisodesList' })
-    for elem in series.findAll('tr'):
-        try:
-            match = re.compile('Folge ([0-9]+).+?<td class="seasonEpisodeTitle">.+?<a href="(.+?)">.+?<strong>(.+?)</strong>', re.DOTALL).findall(str(elem))
-            name = match[0][0] + " - " + match[0][2]
-            item = xbmcgui.ListItem(name)
-            item.setIconImage(img)
-            uri = sys.argv[0] + '?mode=PLAY' + '&url=' + match[0][1] + "&name=" + name
-            xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
-        except: pass
+    match = re.compile('<td class="seasonEpisodeTitle">.+?<a href="(.+?)">.+?<strong>(.+?)</strong>', re.DOTALL).findall(html)
+    print match
+    for uri, name in match:
+        m = re.compile('staffel-([0-9]+)/episode-([0-9]+)').findall(uri)
+        season = '%02d' % int(m[0][0])
+        episode = '%02d' % int(m[0][1])
+        item = xbmcgui.ListItem("S" + season + "E" + episode + " " + name)
+        item.setIconImage(img)
+        uri = sys.argv[0] + '?mode=PLAY' + '&url=' + uri + "&name=" + name
+        xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
 
 def play(url, name):
@@ -168,6 +157,8 @@ try:
     url=urllib.unquote_plus(params['url'])
 except: pass
 
+if mode == 'SEARCH':
+    search()
 if mode == 'CATEGORY':
     getCategory(url)
 if mode == 'SERIES':
