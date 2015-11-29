@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import urllib,  urllib2, re, os, sys, string
-import xbmc, xbmcplugin,xbmcgui,xbmcaddon
+import urllib, urllib2, re, os, sys
+import xbmc, xbmcplugin, xbmcgui, xbmcaddon
 
 sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.urlresolver').getAddonInfo( 'path' ), 'lib') )
 sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.t0mm0.common').getAddonInfo( 'path' ), 'lib') )
@@ -56,16 +56,14 @@ def getSeries(url, img):
     print "getSeries: " + url
     html = GET(url)
     match = re.compile('<a href="(.+?staffel.+?)".+?>([0-9]+?)</a>').findall(html)
+    reDescription = re.compile('<p itemprop="description">(.+?)</p>', re.DOTALL)
+    reBackground = re.compile('<div class="backdrop" style="background-image: url\((.+?)\)"></div>')
     for videopage, season in match:
         item = xbmcgui.ListItem('Staffel ' + season)
-        match2 = re.compile('<p itemprop="description">(.+?)</p>', re.DOTALL).findall(html)
-        plot = match2[0]
-        match2 = re.compile('class="genreButton clearbutton" itemprop="genre">(.+?)</a>').findall(html)
-        genre = match2[0]
-        match2 = re.compile('<div class="backdrop" style="background-image: url\((.+?)\)"></div>').findall(html)
-        backdrop = match2[0]
+        plot = reDescription.findall(html)[0]
+        backdrop = reBackground.findall(html)[0]
         item.setArt({ 'poster': img, 'fanart' : backdrop })
-        item.setInfo('video', { 'genre': genre, 'plot': plot, 'plotoutline' : plot })
+        item.setInfo('video', { 'plot': plot, 'plotoutline' : plot })
         item.setIconImage(img)
         uri = sys.argv[0] + '?mode=SEASON' + '&url=' + videopage + "&season=" + season + "&img=" + img
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
@@ -76,10 +74,15 @@ def getSeries(url, img):
 def getSeason(url, season, img):
     print "getSeason: " + url + " Season: " + season
     html = GET(url)
-    match = re.compile('<td class="seasonEpisodeTitle">.+?<a href="(.+?)">.+?<strong>(.+?)</strong>', re.DOTALL).findall(html)
-    print match
-    for uri, name in match:
-        m = re.compile('staffel-([0-9]+)/episode-([0-9]+)').findall(uri)
+    match = re.compile('<td class="seasonEpisodeTitle">.+?<a href="(.+?)">.+?<strong>(.*?)</strong>(.+?)</td>', re.DOTALL).findall(html)
+    reSeason = re.compile('staffel-([0-9]+)/episode-([0-9]+)')
+    reRemain = re.compile('<span>(.+?)</span>')
+    for uri, name, remain in match:
+        print "remain " + remain
+        mRemain = reRemain.findall(remain)
+        if len(mRemain) > 0:
+            name = name + " (" + mRemain[0] + ")"
+        m = reSeason.findall(uri)
         season = '%02d' % int(m[0][0])
         episode = '%02d' % int(m[0][1])
         item = xbmcgui.ListItem("S" + season + "E" + episode + " " + name)
@@ -111,7 +114,6 @@ def play(url, name):
         playlist.clear()
         listitem = xbmcgui.ListItem(name)
         listitem.setPath(stream_url)
-        #listitem.setInfo('video', {'Title': mname, 'Plot': descs} )
         playlist.add(stream_url,listitem)
         xbmc.Player().play(playlist)
         return True
