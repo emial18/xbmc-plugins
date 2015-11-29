@@ -2,11 +2,10 @@
 <addons>
 <addon id="plugin.video.onlinefilme"
        name="onlinefilme.to"
-       version="0.0.1"
+       version="0.0.2"
        provider-name="nn">
     <requires>
         <import addon="xbmc.python" version="2.1.0"/>
-        <import addon="script.module.beautifulsoup"/>
         <import addon="script.module.urlresolver"/>
     </requires>
     <extension point="xbmc.python.pluginsource" provides="video" library="default.py">
