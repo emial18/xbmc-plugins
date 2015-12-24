@@ -5,19 +5,12 @@ import urllib, urllib2, re, os, sys
 import xbmc, xbmcplugin, xbmcgui, xbmcaddon
 import utils
 
-#sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.urlresolver').getAddonInfo( 'path' ), 'lib') )
-#sys.path.append( os.path.join(xbmcaddon.Addon(id='script.module.t0mm0.common').getAddonInfo( 'path' ), 'lib') )
-
-#import urlresolver
-
-headers  = {
-    'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0; Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1; SV1) ; .NET CLR 1.1.4322; .NET CLR 2.0.50727; .NET CLR 3.0.4506.2152; .NET CLR 3.5.30729; .NET4.0C)'
-}
 pluginhandle = int(sys.argv[1])
 
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
 
 def GET(url):
+    print "serienstream::GET " + url
     req = urllib2.Request(url)
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
     response = urllib2.urlopen(req, timeout = 30)
@@ -26,6 +19,7 @@ def GET(url):
     return link
 
 def REDIRECT(url):
+    print "serienstream::REDIRECT " + url
     req = urllib2.Request(url)
     req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
     response = urllib2.urlopen(req, timeout = 30)

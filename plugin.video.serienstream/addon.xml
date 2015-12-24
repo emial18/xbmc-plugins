@@ -1,8 +1,8 @@
 ﻿<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addon id="plugin.video.serienstream"
        name="serienstream.to"
-       version="1.0.0"
-       provider-name="nn">
+       version="1.0.1"
+       provider-name="emial18">
     <requires>
         <import addon="xbmc.python" version="2.1.0"/>
         <import addon="script.module.urlresolver"/>
