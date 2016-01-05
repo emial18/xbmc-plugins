@@ -7,6 +7,8 @@ import utils
 
 pluginhandle = int(sys.argv[1])
 
+UNSUPPORTED_HOSTS = ['Vivo', 'FileNuke', 'CloudTime', 'PowerWatch', 'NowVideo', 'Shared', 'YouWatch']
+
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
 
 def GET(url):
@@ -50,8 +52,8 @@ def getCategory(url):
 def getSeries(url, img):
     print "getSeries: " + url
     html = GET(url)
-    match = re.compile('<a href="(.+?staffel.+?)".+?>([0-9]+?)</a>').findall(html)
-    reDescription = re.compile('<p itemprop="description">(.+?)</p>', re.DOTALL)
+    match = re.compile('<a.+?href="(.+?staffel-[0-9]+)".+?>([0-9]+?)</a>').findall(html)
+    reDescription = re.compile('data-full-description="(.+?)"', re.DOTALL)
     reBackground = re.compile('<div class="backdrop" style="background-image: url\((.+?)\)"></div>')
     for videopage, season in match:
         item = xbmcgui.ListItem('Staffel ' + season)
@@ -60,7 +62,7 @@ def getSeries(url, img):
         item.setArt({ 'poster': img, 'fanart' : backdrop })
         item.setInfo('video', { 'plot': plot, 'plotoutline' : plot })
         item.setIconImage(img)
-        uri = sys.argv[0] + '?mode=SEASON' + '&url=' + videopage + "&season=" + season + "&img=" + img
+        uri = sys.argv[0] + '?mode=SEASON' + '&url=http://serienstream.to' + videopage + "&season=" + season + "&img=" + img
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.setContent(pluginhandle, 'tvshows')
     xbmc.executebuiltin('Container.SetViewMode(504)')
@@ -81,7 +83,7 @@ def getSeason(url, season, img):
         episode = '%02d' % int(m[0][1])
         item = xbmcgui.ListItem("S" + season + "E" + episode + " " + name)
         item.setIconImage(img)
-        uri = sys.argv[0] + '?mode=PLAY' + '&url=' + uri + "&name=" + name
+        uri = sys.argv[0] + '?mode=PLAY' + '&url=http://serienstream.to' + uri + "&name=" + name
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
 
@@ -90,12 +92,15 @@ def play(url, name):
     utils.progress.create('Play video', 'Searching videofile.')
     utils.progress.update( 10, "", "Loading video page", "" )
     html = GET(url)
-    match = re.compile('<i class="icon .+?"></i>\n\s+(.+?)\s+<a href="(.+?)"\n\s+target="_blank">').findall(html)
+    match = re.compile('<a href="(.+?)" target="_blank">\s+<i class="icon (.+?)" title=Icon .+?"></i>').findall(html)
     sources = ""
-    for host, videopage in match:
-        if host != 'Vivo' and host != 'FileNuke' and host != 'CloudTime' and host != 'PowerWatch':
-            redirect = REDIRECT(videopage)
-            sources = sources + redirect + "\n"
+    for videopage, host in match:
+        if not host in UNSUPPORTED_HOSTS:
+            print "Redirecting for host " + host + " to http://serienstream.to" + videopage
+            try:
+                redirect = REDIRECT('http://serienstream.to' + videopage)
+                sources = sources + redirect + "\n"
+            except: pass
     print sources
     if (len(sources)==0):
         xbmc.executebuiltin("XBMC.Notification(Sorry!,Show doesn't have playable links,5000)")
