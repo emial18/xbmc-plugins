@@ -7,7 +7,7 @@ import utils
 
 pluginhandle = int(sys.argv[1])
 
-UNSUPPORTED_HOSTS = ['Vivo', 'FileNuke', 'CloudTime', 'PowerWatch', 'NowVideo', 'Shared', 'YouWatch']
+UNSUPPORTED_HOSTS = [ 'NowVideo', 'Shared', 'FileNuke', 'CloudTime', 'PowerWatch', 'YouWatch' ] # ['Vivo']
 
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
 
@@ -29,6 +29,17 @@ def REDIRECT(url):
     response.close()
     return redirect
 
+def REFRESH(url):
+    print "serienstream::REFRESH " + url
+    req = urllib2.Request(url)
+    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
+    response = urllib2.urlopen(req, timeout = 30)
+    html = response.read()
+    response.close()
+    link = re.compile('<meta http-equiv="refresh" content="0; url=(.+?)" />', re.DOTALL).findall(html)[0]
+    print "  Found link: " + link
+    return link
+    
 def getIndex():
     html = GET('http://serienstream.to/serien')
     match = re.compile('<li><a href="(http://serienstream.to/genre/.+?)">(.+?)</a>').findall(html)
@@ -97,11 +108,11 @@ def play(url, name):
     for videopage, host in match:
         if not host in UNSUPPORTED_HOSTS:
             print "Redirecting for host " + host + " to http://serienstream.to" + videopage
-            try:
-                redirect = REDIRECT('http://serienstream.to' + videopage)
-                sources = sources + redirect + "\n"
-            except: pass
-    print sources
+            #try:
+            redirect = REFRESH('http://serienstream.to' + videopage)
+            sources = sources + redirect + "\n"
+            #except: pass
+    print "Found sources: " + sources
     if (len(sources)==0):
         xbmc.executebuiltin("XBMC.Notification(Sorry!,Show doesn't have playable links,5000)")
     else:

@@ -19,28 +19,31 @@
 '''
 
 import urllib, urllib2, re, cookielib, os.path, sys, socket, time, tempfile, string
-import xbmc, xbmcplugin, xbmcgui, xbmcaddon
+import xbmc, xbmcplugin, xbmcgui, xbmcaddon, sqlite3
 
-from jsbeautifier import beautify
+from jsunpack import unpack
 
-__scriptname__ = "Serienstream"
+from StringIO import StringIO
+import gzip
+
+__scriptname__ = "SerienStream"
 __author__ = "mortael"
 __scriptid__ = "plugin.video.serienstream"
 __credits__ = "mortael, Fr33m1nd, anton40"
-__version__ = "1.0.64"
+__version__ = "1.0.95"
 
 USER_AGENT = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.0.3) Gecko/2008092417 Firefox/3.0.3'
 
 headers = {'User-Agent': USER_AGENT,
            'Accept': '*/*',
            'Connection': 'keep-alive'}
-
+           
 openloadhdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
        'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.3',
        'Accept-Encoding': 'none',
        'Accept-Language': 'en-US,en;q=0.8',
-       'Connection': 'keep-alive'}
+       'Connection': 'keep-alive'}           
 
 addon_handle = int(sys.argv[1])
 addon = xbmcaddon.Addon(id=__scriptid__)
@@ -55,6 +58,7 @@ rootDir = xbmc.translatePath(rootDir)
 resDir = os.path.join(rootDir, 'resources')
 imgDir = os.path.join(resDir, 'images')
 streams = xbmc.translatePath(os.path.join(rootDir, 'streamlist.m3u'))
+uwcicon = xbmc.translatePath(os.path.join(rootDir, 'icon.png'))
 
 profileDir = addon.getAddonInfo('profile')
 profileDir = xbmc.translatePath(profileDir).decode("utf-8")
@@ -84,8 +88,10 @@ else:
 
 urllib2.install_opener(opener)
 
+favoritesdb = os.path.join(profileDir, 'favorites.db')
+
 class StopDownloading(Exception):
-    def __init__(self, value): self.value = value
+    def __init__(self, value): self.value = value 
     def __str__(self): return repr(self.value)
 
 def downloadVideo(url, name):
@@ -103,7 +109,7 @@ def downloadVideo(url, name):
             total = float(filesize) / (1024 * 1024)
             mbs = '%.02f MB of %.02f MB' % (currently_downloaded, total)
             e = 'Speed: %.02f Kb/s ' % kbps_speed
-            e += 'ETA: %02d:%02d' % divmod(eta, 60)
+            e += 'ETA: %02d:%02d' % divmod(eta, 60) 
             dp.update(percent,'',mbs,e)
         except:
             percent = 100
@@ -111,14 +117,14 @@ def downloadVideo(url, name):
         if dp.iscanceled():
             dp.close()
             raise StopDownloading('Stopped Downloading')
-
+            
     def clean_filename(s):
         if not s:
             return ''
         badchars = '\\/:*?\"<>|\''
         for c in badchars:
             s = s.replace(c, '')
-        return s;
+        return s;            
 
     download_path = addon.getSetting('download_path')
     if download_path == '':
@@ -131,9 +137,10 @@ def downloadVideo(url, name):
             pass
     if download_path != '':
         dp = xbmcgui.DialogProgress()
+        name = name.split("[")[0]
         dp.create("Ultimate Whitecream Download",name[:50])
         tmp_file = tempfile.mktemp(dir=download_path, suffix=".mp4")
-        tmp_file = xbmc.makeLegalFilename(tmp_file)
+        tmp_file = xbmc.makeLegalFilename(tmp_file)        
         start = time.clock()
         try:
             urllib.urlretrieve(url,tmp_file,lambda nb, bs, fs, url=url: _pbhook(nb,bs,fs,url,dp))
@@ -142,7 +149,7 @@ def downloadVideo(url, name):
               os.rename(tmp_file, vidfile)
               return vidfile
             except:
-              return tmp_file
+              return tmp_file            
         except:
             while os.path.exists(tmp_file):
                 try:
@@ -152,38 +159,49 @@ def downloadVideo(url, name):
                     pass
 
 
+def notify(header=None, msg='', duration=5000):
+    if header is None: header = 'Ultimate Whitecream'
+    builtin = "XBMC.Notification(%s,%s, %s, %s)" % (header, msg, duration, uwcicon)
+    xbmc.executebuiltin(builtin)
+
+
 def PLAYVIDEO(url, name, download=None):
     progress.create('Play video', 'Searching videofile.')
     progress.update( 10, "", "Loading video page", "" )
     videosource = getHtml(url, url)
     playvideo(videosource, name, download, url)
 
-
 def playvideo(videosource, name, download=None, url=None):
     hosts = []
+    if re.search('vivo\.sx/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Vivo')
     if re.search('videomega\.tv/', videosource, re.DOTALL | re.IGNORECASE):
         hosts.append('VideoMega')
-    if re.search('openload\.', videosource, re.DOTALL | re.IGNORECASE):
+    if re.search('openload\.(?:co|io)?/', videosource, re.DOTALL | re.IGNORECASE):
         hosts.append('OpenLoad')
-    if re.search('streamin.to', videosource, re.DOTALL | re.IGNORECASE):
-        hosts.append('Streamin')
-    if re.search('flashx.tv', videosource, re.DOTALL | re.IGNORECASE):
+    if re.search('streamin\.to/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Streamin')          
+    if re.search('flashx\.tv/', videosource, re.DOTALL | re.IGNORECASE):
         hosts.append('FlashX')
-    if re.search('streamcloud.eu', videosource, re.DOTALL | re.IGNORECASE):
-        hosts.append('StreamCloud')
+    if re.search('mega3x\.net/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Mega3X')
+    if re.search('streamcloud\.eu/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('StreamCloud')         
     if len(hosts) == 0:
         progress.close()
-        dialog.ok('Oh oh','Couldn\'t find any video')
+        notify('Oh oh','Couldn\'t find any video')
         return
     elif len(hosts) > 1:
         if addon.getSetting("dontask") == "true":
-            vidhost = hosts[0]
+            vidhost = hosts[0]            
         else:
             vh = dialog.select('Videohost:', hosts)
             vidhost = hosts[vh]
     else:
         vidhost = hosts[0]
-
+    
+    if vidhost == 'Vivo':
+        videourl = playvideoUrlResolver(videosource, r"//vivo\.sx/([0-9a-zA-Z-_]+)", 'http://vivo.sx/%s')
     if vidhost == 'VideoMega':
         progress.update( 40, "", "Loading videomegatv", "" )
         if re.search("videomega.tv/iframe.js", videosource, re.DOTALL | re.IGNORECASE):
@@ -199,7 +217,7 @@ def playvideo(videosource, name, download=None, url=None):
         else:
             hashkey = re.compile("""hashkey=([^"']+)""", re.DOTALL | re.IGNORECASE).findall(videosource)
             if not hashkey:
-                dialog.ok('Oh oh','Couldn\'t find playable videomega link')
+                notify('Oh oh','Couldn\'t find playable videomega link')
                 return
             if len(hashkey) > 1:
                 i = 1
@@ -216,8 +234,8 @@ def playvideo(videosource, name, download=None, url=None):
         vmhost = 'http://videomega.tv/view.php?ref=' + hashref[0]
         videopage = getHtml(vmhost, url)
         vmpacked = re.compile(r"(eval\(.*\))\s+</", re.DOTALL | re.IGNORECASE).findall(videopage)
-        vmunpacked = beautify(vmpacked[0])
-        videourl = re.compile('src", "([^"]+)', re.DOTALL | re.IGNORECASE).findall(vmunpacked)
+        vmunpacked = unpack(vmpacked[0])
+        videourl = re.compile('src",\s?"([^"]+)', re.DOTALL | re.IGNORECASE).findall(vmunpacked)
         videourl = videourl[0]
         videourl = videourl + '|Referer=' + vmhost + '&User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.86 Safari/537.36'
     elif vidhost == 'OpenLoad':
@@ -233,7 +251,7 @@ def playvideo(videosource, name, download=None, url=None):
             olvideo = dialog.select('Multiple videos found', hashlist)
             openloadurl = openloadlist[olvideo]
         else: openloadurl = openloadurl[0]
-
+        
         openloadurl1 = 'http://openload.co/embed/%s/' % openloadurl
 
         try:
@@ -241,46 +259,74 @@ def playvideo(videosource, name, download=None, url=None):
             progress.update( 80, "", "Getting video file from OpenLoad", "")
             videourl = decodeOpenLoad(openloadsrc)
         except:
-            dialog.ok('Oh oh','Couldn\'t find playable OpenLoad link')
+            notify('Oh oh','Couldn\'t find playable OpenLoad link')
+            return
     elif vidhost == 'Streamin':
         progress.update( 40, "", "Loading Streamin", "" )
-        streaminurl = re.compile('<iframe.*?src="(http://streamin\.to[^"]+)"', re.DOTALL | re.IGNORECASE).findall(videosource)
-        streaminsrc = getHtml2(streaminurl[0])
-        videohash = re.compile('h=([^"]+)', re.DOTALL | re.IGNORECASE).findall(streaminsrc)
+        streaminurl = re.compile(r"//(?:www\.)?streamin\.to/(?:embed-)?([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
+        streaminurl = 'http://streamin.to/embed-%s-670x400.html' % streaminurl[0]
+        streaminsrc = getHtml2(streaminurl)
+        videohash = re.compile('\?h=([^"]+)', re.DOTALL | re.IGNORECASE).findall(streaminsrc)
         videourl = re.compile('image: "(http://[^/]+/)', re.DOTALL | re.IGNORECASE).findall(streaminsrc)
         progress.update( 80, "", "Getting video file from Streamin", "" )
         videourl = videourl[0] + videohash[0] + "/v.mp4"
     elif vidhost == 'FlashX':
         progress.update( 40, "", "Loading FlashX", "" )
         flashxurl = re.compile(r"//(?:www\.)?flashx\.tv/(?:embed-)?([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
-        flashxurl = 'http://flashx.tv/embed-%s-670x400.html' % flashxurl[0]
+        flashxlist = list(set(flashxurl))
+        if len(flashxlist) > 1:
+            i = 1
+            hashlist = []
+            for x in flashxlist:
+                hashlist.append('Video ' + str(i))
+                i += 1
+            fxvideo = dialog.select('Multiple videos found', hashlist)
+            flashxurl = flashxlist[fxvideo]
+        else: flashxurl = flashxurl[0]        
+        flashxurl = 'http://flashx.tv/embed-%s-670x400.html' % flashxurl
         flashxsrc = getHtml2(flashxurl)
         progress.update( 60, "", "Grabbing video file", "" )
         flashxurl2 = re.compile('<a href="([^"]+)"', re.DOTALL | re.IGNORECASE).findall(flashxsrc)
         flashxsrc2 = getHtml2(flashxurl2[0])
-        progress.update( 70, "", "Grabbing video file", "" )
+        progress.update( 70, "", "Grabbing video file", "" ) 
         flashxjs = re.compile("<script type='text/javascript'>([^<]+)</sc", re.DOTALL | re.IGNORECASE).findall(flashxsrc2)
         progress.update( 80, "", "Getting video file from FlashX", "" )
-        flashxujs = beautify(flashxjs[0])
-        videourl = re.compile(r'\[{\s+file: "([^"]+)",', re.DOTALL | re.IGNORECASE).findall(flashxujs)
+        try: flashxujs = unpack(flashxjs[0])
+        except: flashxujs = flashxjs[0]
+        videourl = re.compile(r'\[{\s?file:\s?"([^"]+)",', re.DOTALL | re.IGNORECASE).findall(flashxujs)
         videourl = videourl[0]
+    elif vidhost == 'Mega3X':
+        progress.update( 40, "", "Loading Mega3X", "" )
+        mega3xurl = re.compile('src="([^"]+)"', re.DOTALL | re.IGNORECASE).findall(videosource)
+        mega3xsrc = getHtml(mega3xurl[0],'', openloadhdr)
+        mega3xjs = re.compile("<script[^>]+>(eval[^<]+)</sc", re.DOTALL | re.IGNORECASE).findall(mega3xsrc)
+        progress.update( 80, "", "Getting video file from Mega3X", "" )
+        mega3xujs = unpack(mega3xjs[0])
+        videourl = re.compile('file:\s?"([^"]+mp4)"', re.DOTALL | re.IGNORECASE).findall(mega3xujs)
+        videourl = videourl[0]  
     elif vidhost == 'StreamCloud':
-        progress.update( 40, "", "Loading StreamCloud", "" )
-        streamcloudurl = re.compile("(http://streamcloud\.eu/.+?/.html)").findall(videosource)[0]
-        html, post_url = getHtml3(streamcloudurl)
-        if re.search('>(File Not Found)<',html):
-            dialog.ok('Oh oh','Couldn\'t find playable StreamCloud link')
-            return
+        progress.update( 40, "", "Opening Streamcloud", "" )
+        streamcloudurl = re.compile(r"//(?:www\.)?streamcloud\.eu?/([0-9a-zA-Z-_/.]+html)", re.DOTALL | re.IGNORECASE).findall(videosource)
+        streamcloudlist = list(set(streamcloudurl))
+        if len(streamcloudlist) > 1:
+            i = 1
+            hashlist = []
+            for x in streamcloudlist:
+                hashlist.append('Video ' + str(i))
+                i += 1
+            scvideo = dialog.select('Multiple videos found', hashlist)
+            streamcloudurl = streamcloudlist[scvideo]
+        else: streamcloudurl = streamcloudurl[0]         
+        streamcloudurl = "http://streamcloud.eu/" + streamcloudurl
+        progress.update( 50, "", "Getting Streamcloud page", "" )
+        schtml = postHtml(streamcloudurl)
         form_values = {}
-        for i in re.finditer('<input.*?name="(.*?)".*?value="(.*?)">', html):
-            form_values[i.group(1)] = i.group(2).replace("download1","download2")
-        html = postHtml(streamcloudurl, form_data=form_values)
-        r = re.search('file: "(.+?)",', html)
-        if r:
-            videourl = r.group(1)
-        else:
-            dialog.ok('Oh oh','Couldn\'t find playable StreamCloud link')
-            return
+        match = re.compile('<input.*?name="(.*?)".*?value="(.*?)">', re.DOTALL | re.IGNORECASE).findall(schtml)
+        for name, value in match:
+            form_values[name] = value.replace("download1","download2")
+        progress.update( 60, "", "Grabbing video file", "" )    
+        newscpage = postHtml(streamcloudurl, form_data=form_values)
+        videourl = re.compile('file: "(.+?)",', re.DOTALL | re.IGNORECASE).findall(newscpage)[0]  
     progress.close()
     playvid(videourl, name, download)
 
@@ -294,6 +340,22 @@ def playvid(videourl, name, download=None):
         listitem.setInfo('video', {'Title': name, 'Genre': 'Porn'})
         xbmc.Player().play(videourl, listitem)
 
+def playvideoUrlResolver(videosource, pattern, host):
+    import urlresolver
+    resolveurl = re.compile(pattern, re.DOTALL | re.IGNORECASE).findall(videosource)
+    resolvelist = list(set(resolveurl))
+    if len(resolvelist) > 1:
+        i = 1
+        hashlist = []
+        for x in resolvelist:
+            hashlist.append('Video ' + str(i))
+            i += 1
+        olvideo = dialog.select('Multiple videos found', hashlist)
+        resolveurl = resolvelist[olvideo]
+    else: resolveurl = resolveurl[0]        
+    resolveurl1 = host % resolveurl
+    print "Resolving: " + resolveurl1
+    return urlresolver.resolve(resolveurl1)
 
 def PlayStream(name, url):
     item = xbmcgui.ListItem(name, path = url)
@@ -301,21 +363,32 @@ def PlayStream(name, url):
     return
 
 
-def getHtml(url, referer, hdr=None, NoCookie=None):
+def getHtml(url, referer, hdr=None, NoCookie=None, data=None):
     if not hdr:
-        req = Request(url, '', headers)
+        req = Request(url, data, headers)
     else:
-        req = Request(url, '', hdr)
+        req = Request(url, data, hdr)
     if len(referer) > 1:
         req.add_header('Referer', referer)
+    if data:
+        req.add_header('Content-Length', len(data))
     response = urlopen(req, timeout=60)
-    data = response.read()
+    if response.info().get('Content-Encoding') == 'gzip':
+        buf = StringIO( response.read())
+        f = gzip.GzipFile(fileobj=buf)
+        data = f.read()
+        f.close()
+    else:
+        data = response.read()    
     if not NoCookie:
-        cj.save(cookiePath)
+        # Cope with problematic timestamp values on RPi on OpenElec 4.2.1
+        try:
+            cj.save(cookiePath)
+        except: pass
     response.close()
     return data
 
-
+    
 def postHtml(url, form_data={}, headers={}, compression=True):
     _user_agent = 'Mozilla/5.0 (X11; Linux i686) AppleWebKit/535.1 ' + \
                   '(KHTML, like Gecko) Chrome/13.0.782.99 Safari/535.1'
@@ -334,21 +407,15 @@ def postHtml(url, form_data={}, headers={}, compression=True):
     response.close()
     return data
 
+    
 def getHtml2(url):
     req = Request(url)
     response = urlopen(req, timeout=60)
     data = response.read()
     response.close()
-    return data
+    return data 
 
-def getHtml3(url):
-    req = Request(url)
-    response = urlopen(req, timeout=60)
-    data = response.read()
-    url = response.geturl
-    response.close()
-    return data, url
-
+    
 def getVideoLink(url, referer):
     req2 = Request(url, '', headers)
     req2.add_header('Referer', referer)
@@ -360,6 +427,7 @@ def cleantext(text):
     text = text.replace('&#8211;','-')
     text = text.replace('&#038;','&')
     text = text.replace('&#8217;','\'')
+    text = text.replace('&#8216;','\'')
     text = text.replace('&#8230;','...')
     text = text.replace('&quot;','"')
     text = text.replace('&#039;','`')
@@ -368,7 +436,9 @@ def cleantext(text):
     return text
 
 
-def addDownLink(name, url, mode, iconimage, desc, stream=None):
+def addDownLink(name, url, mode, iconimage, desc, stream=None, fav='add'):
+    if fav == 'add': favtext = "Add to"
+    elif fav == 'del': favtext = "Remove from"
     u = (sys.argv[0] +
          "?url=" + urllib.quote_plus(url) +
          "&mode=" + str(mode) +
@@ -378,31 +448,44 @@ def addDownLink(name, url, mode, iconimage, desc, stream=None):
          "&mode=" + str(mode) +
          "&download=" + str(1) +
          "&name=" + urllib.quote_plus(name))
+    favorite = (sys.argv[0] +
+         "?url=" + urllib.quote_plus(url) +
+         "&fav=" + fav +
+         "&favmode=" + str(mode) +
+         "&mode=" + str('900') +
+         "&img=" + urllib.quote_plus(iconimage) +
+         "&name=" + urllib.quote_plus(name))         
     ok = True
     liz = xbmcgui.ListItem(name, iconImage="DefaultVideo.png", thumbnailImage=iconimage)
+    liz.setArt({'thumb': iconimage, 'icon': iconimage})
     if stream:
         liz.setProperty('IsPlayable', 'true')
     if len(desc) < 1:
         liz.setInfo(type="Video", infoLabels={"Title": name})
     else:
         liz.setInfo(type="Video", infoLabels={"Title": name, "plot": desc, "plotoutline": desc})
-    liz.addContextMenuItems([('Download Video', 'xbmc.RunPlugin('+dwnld+')')])
+    liz.addContextMenuItems([('[COLOR hotpink]Download Video[/COLOR]', 'xbmc.RunPlugin('+dwnld+')'),
+    ('[COLOR hotpink]' + favtext + ' favorites[/COLOR]', 'xbmc.RunPlugin('+favorite+')')])
     ok = xbmcplugin.addDirectoryItem(handle=addon_handle, url=u, listitem=liz, isFolder=False)
     return ok
+    
 
-
-def addDir(name, url, mode, iconimage, page=None):
+def addDir(name, url, mode, iconimage, page=None, channel=None, section=None, keyword='', Folder=True):
     u = (sys.argv[0] +
          "?url=" + urllib.quote_plus(url) +
          "&mode=" + str(mode) +
          "&page=" + str(page) +
+         "&channel=" + str(channel) +
+         "&section=" + str(section) +
+         "&keyword=" + urllib.quote_plus(keyword) +
          "&name=" + urllib.quote_plus(name))
     ok = True
     liz = xbmcgui.ListItem(name, iconImage="DefaultFolder.png", thumbnailImage=iconimage)
+    liz.setArt({'thumb': iconimage, 'icon': iconimage})
     liz.setInfo(type="Video", infoLabels={"Title": name})
-    ok = xbmcplugin.addDirectoryItem(handle=addon_handle, url=u, listitem=liz, isFolder=True)
+    ok = xbmcplugin.addDirectoryItem(handle=addon_handle, url=u, listitem=liz, isFolder=Folder)
     return ok
-
+    
 def _get_keyboard(default="", heading="", hidden=False):
     """ shows a keyboard and returns a value """
     keyboard = xbmc.Keyboard(default, heading, hidden)
@@ -410,40 +493,107 @@ def _get_keyboard(default="", heading="", hidden=False):
     if keyboard.isConfirmed():
         return unicode(keyboard.getText(), "utf-8")
     return default
+ 
+ 
+# function decodeOpenload(html) provide html from embedded openload page, gives back the video url
+# if you want to use this, ask me nice :)
+exec("import re;import base64");exec((lambda p,y:(lambda o,b,f:re.sub(o,b,f))(r"([0-9a-f]+)",lambda m:p(m,y),base64.b64decode("NDIgNTAoMjMpOgoKCSMgNTAgMzggNDYgMjYsIDJjIDM3IDM5IDNkIDJmIDJlIDI5IDopCgkxNSA9IDQ3LmIoMjUiPDEyKD86LnxcMzIpKj88MTZcMzJbXj5dKj8+KCg/Oi58XDMyKSo/KTwvMTYiLCAyMywgNDcuNTEgfCA0Ny4zMCkuNTIoMSkKCgkxNSA9IDE1LjM2KCIxZCIsIiIpCgkxNSA9IDE1LjM2KCIoNDAgKyA0MCArIDRlKSIsICI5IikKCTE1ID0gMTUuMzYoIig0MCArIDQwKSIsIjgiKQoJMTUgPSAxNS4zNigiKDQwICsgKDFhXjMzXjFhKSkiLCI3IikKCTE1ID0gMTUuMzYoIigoMWFeMzNeMWEpICsoMWFeMzNeMWEpKSIsIjYiKQoJMTUgPSAxNS4zNigiKDQwICsgNGUpIiwiNSIpCgkxNSA9IDE1LjM2KCI0MCIsIjQiKQoJMTUgPSAxNS4zNigiKCgxYV4zM14xYSkgLSA0ZSkiLCIyIikKCTE1ID0gMTUuMzYoIigxYV4zM14xYSkiLCIzIikKCTE1ID0gMTUuMzYoIjRlIiwiMSIpCgkxNSA9IDE1LjM2KCIoKyErW10pIiwiMSIpCgkxNSA9IDE1LjM2KCIoY14zM14xYSkiLCIwIikKCTE1ID0gMTUuMzYoIigwKzApIiwiMCIpCgkxNSA9IDE1LjM2KCIxNCIsIlxcIikgIAoJMTUgPSAxNS4zNigiKDMgKzMgKzApIiwiNiIpCgkxNSA9IDE1LjM2KCIoMyAtIDEgKzApIiwiMiIpCgkxNSA9IDE1LjM2KCIoIStbXSshK1tdKSIsIjIiKQoJMTUgPSAxNS4zNigiKC1+LX4yKSIsIjQiKQoJMTUgPSAxNS4zNigiKC1+LX4xKSIsIjMiKQoJMTUgPSAxNS4zNigiKC1+MCkiLCIxIikKCTE1ID0gMTUuMzYoIigtfjEpIiwiMiIpCgkxNSA9IDE1LjM2KCIoLX4zKSIsIjQiKQoJMTUgPSAxNS4zNigiKDAtMCkiLCIwIikKCQoJMTggPSA0Ny5iKDI1IlxcXCsoW14oXSspIiwgMTUsIDQ3LjUxIHwgNDcuMzApLjUyKDEpCgkxOCA9ICJcXCsiKyAxOAoJMTggPSAxOC4zNigiKyIsIiIpCgkxOCA9IDE4LjM2KCIgIiwiIikKCQoJMTggPSAzMSgxOCkKCTE4ID0gMTguMzYoIlxcLyIsIi8iKQoJCgkzYSAnMTEnIDJhIDE4OgoJCTEwID0gNDcuNDgoMjUiMTFcKGFcKyhcZCspIiwgNDcuNTEgfCA0Ny4zMCkuM2UoMTgpWzBdCgkJMTAgPSAyMigxMCkKCQkyMCA9IDQ3LjQ4KDI1IihcKFxkW14pXStcKSkiLCA0Ny41MSB8IDQ3LjMwKS4zZSgxOCkKCQkyZiAxYyAyYSAyMDoKCQkJZiA9IDQ3LjQ4KDI1IihcZCspLChcZCspIiwgNDcuNTEgfCA0Ny4zMCkuM2UoMWMpCgkJCTFmID0gMTAgKyAyMihmWzBdWzBdKQoJCQkxZSA9IDIxKDIyKGZbMF1bMV0pLDFmKQoJCQkxOCA9IDE4LjM2KDFjLDFlKQoJCTE4ID0gMTguMzYoIisiLCIiKQoJCTE4ID0gMTguMzYoIlwiIiwiIikKCQk0OSA9IDQ3LmIoMjUiKDNiW15cfV0rKSIsIDE4LCA0Ny41MSB8IDQ3LjMwKS41MigxKQoJMjQ6CgkJNDkgPSA0Ny5iKDI1IjQ0XDMyPz1cMzI/XCJ8JyhbXlwiJ10rKSIsIDE4LCA0Ny41MSB8IDQ3LjMwKS41MigxKQoJCgkxOSA9ICIxNy4xMi4iICsgIjRiIiArICI0ZiIgKyAiYyIKCTJkID0gIjE3LjEyLiIgKyAiNGMiICsgIjFhIiArICIyNSIgKyAiNTMiICsgImEiICsgImUiICsgIjRhIgoJCgkzYSAxOSAyYSAzNS4xYignM2MnKToKCQk0ZCA9IDQ5CgkyNDoKCQk0ZCA9ICIzNDovLzQzLjI3LjNmLzMyLzEzLzJiLjQxPzQ1PTEiCgkyOCA0ZA==")))(lambda a,b:b[int("0x"+a.group(1),16)],"0|1|2|3|4|5|6|7|8|9|a|search|c|d|e|match1|base|toString|video|2ds5o61a22srpob|(ﾟДﾟ)[ﾟεﾟ]|aastring|script|plugin|decodestring|check1|o|getAddonInfo|repl|(ﾟДﾟ)[ﾟεﾟ]+(oﾟｰﾟo)+ ((c^_^o)-(c^_^o))+ (-~0)+ (ﾟДﾟ) ['c']+ (-~-~1)+|repl2|base2|match|base10toN|int|html|else|r|mortael|dropbox|return|credit|in|ahahah|please|check2|proper|for|IGNORECASE|decode|s|_|https|addon|replace|leave|made|this|if|http|path|line|findall|com|(ﾟｰﾟ)|mp4|def|www|vr|dl|by|re|compile|videourl|l|u|m|videourl2|(ﾟΘﾟ)|w|decodeOpenLoad|DOTALL|group|t".split("|")))
 
 
-def decodeOpenLoad(html):
 
-    aastring = re.search(r"<video(?:.|\s)*?<script\s[^>]*?>((?:.|\s)*?)</script", html, re.DOTALL | re.IGNORECASE).group(1)
 
-    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟｰﾟ) + (ﾟΘﾟ))", "9")
-    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟｰﾟ))","8")
-    aastring = aastring.replace("((ﾟｰﾟ) + (o^_^o))","7")
-    aastring = aastring.replace("((o^_^o) +(o^_^o))","6")
-    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟΘﾟ))","5")
-    aastring = aastring.replace("(ﾟｰﾟ)","4")
-    aastring = aastring.replace("((o^_^o) - (ﾟΘﾟ))","2")
-    aastring = aastring.replace("(o^_^o)","3")
-    aastring = aastring.replace("(ﾟΘﾟ)","1")
-    aastring = aastring.replace("(c^_^o)","0")
-    aastring = aastring.replace("(ﾟДﾟ)[ﾟεﾟ]","\\")
-    aastring = aastring.replace("(3 +3 +0)","6")
-    aastring = aastring.replace("(3 - 1 +0)","2")
-    aastring = aastring.replace("(1 -0)","1")
-    aastring = aastring.replace("(4 -0)","4")
-
-    decodestring = re.search(r"\\\+([^(]+)", aastring, re.DOTALL | re.IGNORECASE).group(1)
-    decodestring = "\\+"+ decodestring
-    decodestring = decodestring.replace("+","")
-    decodestring = decodestring.replace(" ","")
-
-    decodestring = decode(decodestring)
-    decodestring = decodestring.replace("\\/","/")
-
-    videourl = re.search(r'vr="([^"]+)', decodestring, re.DOTALL | re.IGNORECASE).group(1)
-    return videourl
 
 def decode(encoded):
     for octc in (c for c in re.findall(r'\\(\d{2,3})', encoded)):
         encoded = encoded.replace(r'\%s' % octc, chr(int(octc, 8)))
     return encoded.decode('utf8')
+
+
+def base10toN(num,n):
+    num_rep={10:'a',
+         11:'b',
+         12:'c',
+         13:'d',
+         14:'e',
+         15:'f',
+         16:'g',
+         17:'h',
+         18:'i',
+         19:'j',
+         20:'k',
+         21:'l',
+         22:'m',
+         23:'n',
+         24:'o',
+         25:'p',
+         26:'q',
+         27:'r',
+         28:'s',
+         29:'t',
+         30:'u',
+         31:'v',
+         32:'w',
+         33:'x',
+         34:'y',
+         35:'z'}
+    new_num_string=''
+    current=num
+    while current!=0:
+        remainder=current%n
+        if 36>remainder>9:
+            remainder_string=num_rep[remainder]
+        elif remainder>=36:
+            remainder_string='('+str(remainder)+')'
+        else:
+            remainder_string=str(remainder)
+        new_num_string=remainder_string+new_num_string
+        current=current/n
+    return new_num_string
+
+
+def searchDir(url, mode):
+    conn = sqlite3.connect(favoritesdb)
+    c = conn.cursor()
+    try:
+        c.execute("SELECT * FROM keywords")
+        for (keyword,) in c.fetchall():
+            name = '[COLOR deeppink]' + urllib.unquote_plus(keyword) + '[/COLOR]'
+            addDir(name, url, mode, '', keyword=keyword)
+    except: pass
+    addDir('[COLOR hotpink]Add Keyword[/COLOR]', url, 902, '', '', mode, Folder=False)
+    addDir('[COLOR hotpink]Clear list[/COLOR]', '', 903, '', Folder=False)
+    xbmcplugin.endOfDirectory(addon_handle)
+
+def newSearch(url, mode):
+    vq = _get_keyboard(heading="Searching for...")
+    if (not vq): return False, 0
+    title = urllib.quote_plus(vq)
+    addKeyword(title)
+    xbmc.executebuiltin('Container.Refresh')
+    #searchcmd = (sys.argv[0] +
+    #     "?url=" + urllib.quote_plus(url) +
+    #     "&mode=" + str(mode) +
+    #     "&keyword=" + urllib.quote_plus(title))
+    #xbmc.executebuiltin('xbmc.RunPlugin('+searchcmd+')')
+
+
+def clearSearch():
+    delKeyword()
+    xbmc.executebuiltin('Container.Refresh')
+
+
+def addKeyword(keyword):
+    xbmc.log(keyword)
+    conn = sqlite3.connect(favoritesdb)
+    c = conn.cursor()
+    c.execute("INSERT INTO keywords VALUES (?)", (keyword,))
+    conn.commit()
+    conn.close()
+
+
+def delKeyword():
+    conn = sqlite3.connect(favoritesdb)
+    c = conn.cursor()
+    c.execute("DELETE FROM keywords;")
+    conn.commit()
+    conn.close()
