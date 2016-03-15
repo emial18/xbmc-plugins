@@ -107,11 +107,7 @@ def play(url, name):
     sources = ""
     for videopage, host in match:
         if not host in UNSUPPORTED_HOSTS:
-            print "Redirecting for host " + host + " to http://serienstream.to" + videopage
-            #try:
-            redirect = REFRESH('http://serienstream.to' + videopage)
-            sources = sources + redirect + "\n"
-            #except: pass
+            sources = sources + videopage + "\n"
     print "Found sources: " + sources
     if (len(sources)==0):
         xbmc.executebuiltin("XBMC.Notification(Sorry!,Show doesn't have playable links,5000)")
