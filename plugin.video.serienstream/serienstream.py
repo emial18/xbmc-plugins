@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import urllib, urllib2, re, os, sys
+import urllib, urllib2, re, os, sys, time
 import xbmc, xbmcplugin, xbmcgui, xbmcaddon
 import utils
 
@@ -10,36 +10,77 @@ pluginhandle = int(sys.argv[1])
 UNSUPPORTED_HOSTS = [ 'NowVideo', 'Shared', 'FileNuke', 'CloudTime', 'PowerWatch', 'YouWatch' ] # ['Vivo']
 
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
+sys.path.append(os.path.join(addon.getAddonInfo('path'), "lib" ) )
+import cfscrape
+
+def notify(header=None, msg='', duration=5000):
+    if header is None: header = 'SerienStream.to'
+    builtin = "XBMC.Notification(%s,%s, %s, %s)" % (header, msg, duration, xbmc.translatePath(os.path.join(addon.getAddonInfo('path'), 'icon.png')))
+    xbmc.executebuiltin(builtin)
+
+
+def update_cloudfare():
+    filename = os.path.join(xbmc.translatePath(addon.getAddonInfo('profile')), 'cloudfare.txt')
+    if os.path.isfile(filename) and (time.time() - os.path.getmtime(filename) < 3600):
+        f = open(filename,'r')
+        content = [x.strip('\n') for x in f.readlines()]
+        f.close()
+        cookie_value = content[0]
+        user_agent = content[1]
+        return cookie_value, user_agent
+    else:
+        notify("Okay", "Get Cloudflare token")
+        cookie_value, user_agent = cfscrape.get_cookie_string("http://serienstream.to")
+        f = open(filename,'w')
+        f.write(cookie_value + '\n')
+        f.write(user_agent + '\n')
+        f.close()
+        return cookie_value, user_agent
 
 def GET(url):
     print "serienstream::GET " + url
-    req = urllib2.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
-    response = urllib2.urlopen(req, timeout = 30)
-    link = response.read()
-    response.close()
-    return link
+    try:
+        req = urllib2.Request(url)
+        req.add_header('User-Agent', user_agent)
+        req.add_header('Cookie', cookie_value)
+        response = urllib2.urlopen(req, timeout = 30)
+        link = response.read()
+        response.close()
+        return link
+    except Exception as e:
+        notify("Oh oh", e)
+        return ""
 
 def REDIRECT(url):
     print "serienstream::REDIRECT " + url
-    req = urllib2.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
-    response = urllib2.urlopen(req, timeout = 30)
-    redirect = response.geturl()
-    response.close()
-    return redirect
+    try:
+        req = urllib2.Request(url)
+        req.add_header('User-Agent', user_agent)
+        req.add_header('Cookie', cookie_value)
+        response = urllib2.urlopen(req, timeout = 30)
+        redirect = response.geturl()
+        response.close()
+        return redirect
+    except:
+        notify("Oh oh", "")
+        return ""
 
 def REFRESH(url):
     print "serienstream::REFRESH " + url
-    req = urllib2.Request(url)
-    req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
-    response = urllib2.urlopen(req, timeout = 30)
-    html = response.read()
-    response.close()
-    link = re.compile('<meta http-equiv="refresh" content="0; url=(.+?)" />', re.DOTALL).findall(html)[0]
-    print "  Found link: " + link
-    return link
-    
+    try:
+        req = urllib2.Request(url)
+        req.add_header('User-Agent', user_agent)
+        req.add_header('Cookie', cookie_value)
+        response = urllib2.urlopen(req, timeout = 30)
+        html = response.read()
+        response.close()
+        link = re.compile('<meta http-equiv="refresh" content="0; url=(.+?)" />', re.DOTALL).findall(html)[0]
+        print "  Found link: " + link
+        return link
+    except:
+        notify("Oh oh", "")
+        return ""
+
 def getIndex():
     html = GET('http://serienstream.to/serien')
     match = re.compile('<li><a href="(http://serienstream.to/genre/.+?)">(.+?)</a>').findall(html)
@@ -113,3 +154,5 @@ def play(url, name):
         xbmc.executebuiltin("XBMC.Notification(Sorry!,Show doesn't have playable links,5000)")
     else:
         utils.playvideo(sources, name)
+
+cookie_value, user_agent = update_cloudfare()

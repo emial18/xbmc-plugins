@@ -19,7 +19,7 @@
 '''
 
 import urllib, urllib2, re, cookielib, os.path, sys, socket, time, tempfile, string
-import xbmc, xbmcplugin, xbmcgui, xbmcaddon, sqlite3
+import xbmc, xbmcplugin, xbmcgui, xbmcaddon, sqlite3, urlparse, xbmcvfs, base64
 
 from jsunpack import unpack
 
@@ -29,8 +29,8 @@ import gzip
 __scriptname__ = "SerienStream"
 __author__ = "mortael"
 __scriptid__ = "plugin.video.serienstream"
-__credits__ = "mortael, Fr33m1nd, anton40"
-__version__ = "1.0.95"
+__credits__ = "mortael, Fr33m1nd, anton40, NothingGnome"
+__version__ = "1.1.18"
 
 USER_AGENT = 'Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.0.3) Gecko/2008092417 Firefox/3.0.3'
 
@@ -57,7 +57,6 @@ if rootDir[-1] == ';':
 rootDir = xbmc.translatePath(rootDir)
 resDir = os.path.join(rootDir, 'resources')
 imgDir = os.path.join(resDir, 'images')
-streams = xbmc.translatePath(os.path.join(rootDir, 'streamlist.m3u'))
 uwcicon = xbmc.translatePath(os.path.join(rootDir, 'icon.png'))
 
 profileDir = addon.getAddonInfo('profile')
@@ -96,13 +95,13 @@ class StopDownloading(Exception):
 
 def downloadVideo(url, name):
 
-    def _pbhook(numblocks, blocksize, filesize, url=None,dp=None):
+    def _pbhook(downloaded, filesize, url=None,dp=None):
         try:
-            percent = min((numblocks*blocksize*100)/filesize, 100)
-            currently_downloaded = float(numblocks) * blocksize / (1024 * 1024)
-            kbps_speed = int((numblocks*blocksize) / (time.clock() - start))
+            percent = min((downloaded*100)/filesize, 100)
+            currently_downloaded = float(downloaded) / (1024 * 1024)
+            kbps_speed = int(downloaded / (time.clock() - start))
             if kbps_speed > 0:
-                eta = (filesize - numblocks * blocksize) / kbps_speed
+                eta = (filesize - downloaded) / kbps_speed
             else:
                 eta = 0
             kbps_speed = kbps_speed / 1024
@@ -117,7 +116,151 @@ def downloadVideo(url, name):
         if dp.iscanceled():
             dp.close()
             raise StopDownloading('Stopped Downloading')
+
             
+    def getResponse(url, headers2, size):
+        try:
+            if size > 0:
+                size = int(size)
+                headers2['Range'] = 'bytes=%d-' % size
+
+            req = Request(url, headers=headers2)
+
+            resp = urlopen(req, timeout=30)
+            return resp
+        except:
+            return None    
+
+    def doDownload(url, dest, dp):
+
+        try: headers = dict(urlparse.parse_qsl(url.rsplit('|', 1)[1]))
+        except: headers = dict('')
+        
+        if 'openload' in url:
+            headers = openloadhdr
+
+        url = url.split('|')[0]
+        file = dest.rsplit(os.sep, 1)[-1]
+        resp = getResponse(url, headers, 0)
+
+        if not resp:
+            xbmcgui.Dialog().ok("Ultimate Whitecream", 'Download failed', 'No response from server')
+            return False
+
+        try:    content = int(resp.headers['Content-Length'])
+        except: content = 0
+
+        try:    resumable = 'bytes' in resp.headers['Accept-Ranges'].lower()
+        except: resumable = False
+
+        #print "Download Header"
+        #print resp.headers
+        if resumable:
+            print "Download is resumable"
+
+        if content < 1:
+            xbmcgui.Dialog().ok("Ultimate Whitecream", 'Unknown filesize', 'Unable to download')
+            return False
+
+        size = 8192
+        mb   = content / (1024 * 1024)
+
+        if content < size:
+            size = content
+
+        total   = 0
+        errors  = 0
+        count   = 0
+        resume  = 0
+        sleep   = 0
+
+        print 'Download File Size : %dMB %s ' % (mb, dest)
+
+        #f = open(dest, mode='wb')
+        f = xbmcvfs.File(dest, 'w')
+
+        chunk  = None
+        chunks = []
+
+        while True:
+            downloaded = total
+            for c in chunks:
+                downloaded += len(c)
+            percent = min(100 * downloaded / content, 100)
+
+            _pbhook(downloaded,content,url,dp)
+
+            chunk = None
+            error = False
+
+            try:        
+                chunk  = resp.read(size)
+                if not chunk:
+                    if percent < 99:
+                        error = True
+                    else:
+                        while len(chunks) > 0:
+                            c = chunks.pop(0)
+                            f.write(c)
+                            del c
+
+                        f.close()
+                        print '%s download complete' % (dest)
+                        return True
+
+            except Exception, e:
+                print str(e)
+                error = True
+                sleep = 10
+                errno = 0
+
+                if hasattr(e, 'errno'):
+                    errno = e.errno
+
+                if errno == 10035: # 'A non-blocking socket operation could not be completed immediately'
+                    pass
+
+                if errno == 10054: #'An existing connection was forcibly closed by the remote host'
+                    errors = 10 #force resume
+                    sleep  = 30
+
+                if errno == 11001: # 'getaddrinfo failed'
+                    errors = 10 #force resume
+                    sleep  = 30
+
+            if chunk:
+                errors = 0
+                chunks.append(chunk)
+                if len(chunks) > 5:
+                    c = chunks.pop(0)
+                    f.write(c)
+                    total += len(c)
+                    del c
+
+            if error:
+                errors += 1
+                count  += 1
+                print '%d Error(s) whilst downloading %s' % (count, dest)
+                xbmc.sleep(sleep*1000)
+
+            if (resumable and errors > 0) or errors >= 10:
+                if (not resumable and resume >= 50) or resume >= 500:
+                    #Give up!
+                    print '%s download canceled - too many error whilst downloading' % (dest)
+                    return False
+
+                resume += 1
+                errors  = 0
+                if resumable:
+                    chunks  = []
+                    #create new response
+                    print 'Download resumed (%d) %s' % (resume, dest)
+                    resp = getResponse(url, headers, total)
+                else:
+                    #use existing response
+                    pass
+    
+
     def clean_filename(s):
         if not s:
             return ''
@@ -143,13 +286,16 @@ def downloadVideo(url, name):
         tmp_file = xbmc.makeLegalFilename(tmp_file)        
         start = time.clock()
         try:
-            urllib.urlretrieve(url,tmp_file,lambda nb, bs, fs, url=url: _pbhook(nb,bs,fs,url,dp))
-            vidfile = xbmc.makeLegalFilename(download_path + clean_filename(name) + ".mp4")
-            try:
-              os.rename(tmp_file, vidfile)
-              return vidfile
-            except:
-              return tmp_file            
+            #urllib.urlretrieve(url,tmp_file,lambda nb, bs, fs, url=url: _pbhook(nb,bs,fs,url,dp))
+            downloaded = doDownload(url, tmp_file, dp)
+            if downloaded:
+                vidfile = xbmc.makeLegalFilename(download_path + clean_filename(name) + ".mp4")
+                try:
+                  os.rename(tmp_file, vidfile)
+                  return vidfile
+                except:
+                  return tmp_file
+            else: raise StopDownloading('Stopped Downloading')
         except:
             while os.path.exists(tmp_file):
                 try:
@@ -171,6 +317,7 @@ def PLAYVIDEO(url, name, download=None):
     videosource = getHtml(url, url)
     playvideo(videosource, name, download, url)
 
+
 def playvideo(videosource, name, download=None, url=None):
     hosts = []
     if re.search('vivo\.sx/', videosource, re.DOTALL | re.IGNORECASE):
@@ -186,7 +333,16 @@ def playvideo(videosource, name, download=None, url=None):
     if re.search('mega3x\.net/', videosource, re.DOTALL | re.IGNORECASE):
         hosts.append('Mega3X')
     if re.search('streamcloud\.eu/', videosource, re.DOTALL | re.IGNORECASE):
-        hosts.append('StreamCloud')         
+        hosts.append('StreamCloud')
+    if re.search('jetload\.tv/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Jetload')
+    if re.search('videowood\.tv/', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Videowood')
+    if re.search('streamdefence.com/view\.php', videosource, re.DOTALL | re.IGNORECASE):
+        hosts.append('Streamdefence')        
+    if not url == None and not 'keeplinks' in url:
+        if re.search('keeplinks\.eu/p1', videosource, re.DOTALL | re.IGNORECASE):
+            hosts.append('Keeplinks <--')        
     if len(hosts) == 0:
         progress.close()
         notify('Oh oh','Couldn\'t find any video')
@@ -219,15 +375,7 @@ def playvideo(videosource, name, download=None, url=None):
             if not hashkey:
                 notify('Oh oh','Couldn\'t find playable videomega link')
                 return
-            if len(hashkey) > 1:
-                i = 1
-                hashlist = []
-                for x in hashkey:
-                    hashlist.append('Video ' + str(i))
-                    i += 1
-                vmvideo = dialog.select('Multiple videos found', hashlist)
-                hashkey = hashkey[vmvideo]
-            else: hashkey = hashkey[0]
+            hashkey = chkmultivids(hashkey)
             hashpage = getHtml('http://videomega.tv/validatehash.php?hashkey='+hashkey, url)
             hashref = re.compile('ref="([^"]+)', re.DOTALL | re.IGNORECASE).findall(hashpage)
         progress.update( 80, "", "Getting video file from Videomega", "" )
@@ -237,34 +385,27 @@ def playvideo(videosource, name, download=None, url=None):
         vmunpacked = unpack(vmpacked[0])
         videourl = re.compile('src",\s?"([^"]+)', re.DOTALL | re.IGNORECASE).findall(vmunpacked)
         videourl = videourl[0]
-        videourl = videourl + '|Referer=' + vmhost + '&User-Agent: Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/46.0.2490.86 Safari/537.36'
+        videourl = videourl + '|Referer=' + vmhost + '&User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 6_0 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Version/6.0 Mobile/10A5376e Safari/8536.25'
     elif vidhost == 'OpenLoad':
         progress.update( 40, "", "Loading Openload", "" )
         openloadurl = re.compile(r"//(?:www\.)?openload\.(?:co|io)?/(?:embed|f)/([0-9a-zA-Z-_]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
-        openloadlist = list(set(openloadurl))
-        if len(openloadlist) > 1:
-            i = 1
-            hashlist = []
-            for x in openloadlist:
-                hashlist.append('Video ' + str(i))
-                i += 1
-            olvideo = dialog.select('Multiple videos found', hashlist)
-            openloadurl = openloadlist[olvideo]
-        else: openloadurl = openloadurl[0]
+        openloadurl = chkmultivids(openloadurl)
         
-        openloadurl1 = 'http://openload.co/embed/%s/' % openloadurl
+        openloadurl1 = 'http://openload.co/f/%s/' % openloadurl
 
         try:
             openloadsrc = getHtml(openloadurl1, '', openloadhdr)
             progress.update( 80, "", "Getting video file from OpenLoad", "")
             videourl = decodeOpenLoad(openloadsrc)
+            videourl = videourl + '|Referer='+ openloadurl1 + '&User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 6_0 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Version/6.0 Mobile/10A5376e Safari/8536.25'
         except:
             notify('Oh oh','Couldn\'t find playable OpenLoad link')
             return
     elif vidhost == 'Streamin':
         progress.update( 40, "", "Loading Streamin", "" )
         streaminurl = re.compile(r"//(?:www\.)?streamin\.to/(?:embed-)?([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
-        streaminurl = 'http://streamin.to/embed-%s-670x400.html' % streaminurl[0]
+        streaminurl = chkmultivids(streaminurl)
+        streaminurl = 'http://streamin.to/embed-%s-670x400.html' % streaminurl
         streaminsrc = getHtml2(streaminurl)
         videohash = re.compile('\?h=([^"]+)', re.DOTALL | re.IGNORECASE).findall(streaminsrc)
         videourl = re.compile('image: "(http://[^/]+/)', re.DOTALL | re.IGNORECASE).findall(streaminsrc)
@@ -273,32 +414,24 @@ def playvideo(videosource, name, download=None, url=None):
     elif vidhost == 'FlashX':
         progress.update( 40, "", "Loading FlashX", "" )
         flashxurl = re.compile(r"//(?:www\.)?flashx\.tv/(?:embed-)?([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
-        flashxlist = list(set(flashxurl))
-        if len(flashxlist) > 1:
-            i = 1
-            hashlist = []
-            for x in flashxlist:
-                hashlist.append('Video ' + str(i))
-                i += 1
-            fxvideo = dialog.select('Multiple videos found', hashlist)
-            flashxurl = flashxlist[fxvideo]
-        else: flashxurl = flashxurl[0]        
+        flashxurl = chkmultivids(flashxurl)       
         flashxurl = 'http://flashx.tv/embed-%s-670x400.html' % flashxurl
         flashxsrc = getHtml2(flashxurl)
         progress.update( 60, "", "Grabbing video file", "" )
         flashxurl2 = re.compile('<a href="([^"]+)"', re.DOTALL | re.IGNORECASE).findall(flashxsrc)
-        flashxsrc2 = getHtml2(flashxurl2[0])
+        flashxsrc2 = getHtml(flashxurl2[0])
         progress.update( 70, "", "Grabbing video file", "" ) 
         flashxjs = re.compile("<script type='text/javascript'>([^<]+)</sc", re.DOTALL | re.IGNORECASE).findall(flashxsrc2)
         progress.update( 80, "", "Getting video file from FlashX", "" )
         try: flashxujs = unpack(flashxjs[0])
         except: flashxujs = flashxjs[0]
-        videourl = re.compile(r'\[{\s?file:\s?"([^"]+)",', re.DOTALL | re.IGNORECASE).findall(flashxujs)
-        videourl = videourl[0]
+        videourl = re.compile(r'\[\{\s*?file:\s*?"([^"]+)",', re.DOTALL | re.IGNORECASE).findall(flashxujs)
+        videourl = videourl[-1]
     elif vidhost == 'Mega3X':
         progress.update( 40, "", "Loading Mega3X", "" )
-        mega3xurl = re.compile('src="([^"]+)"', re.DOTALL | re.IGNORECASE).findall(videosource)
-        mega3xsrc = getHtml(mega3xurl[0],'', openloadhdr)
+        mega3xurl = re.compile(r"(https?://(?:www\.)?mega3x.net/(?:embed-)?(?:[0-9a-zA-Z]+).html)", re.DOTALL | re.IGNORECASE).findall(videosource)
+        mega3xurl = chkmultivids(mega3xurl)
+        mega3xsrc = getHtml(mega3xurl,'', openloadhdr)
         mega3xjs = re.compile("<script[^>]+>(eval[^<]+)</sc", re.DOTALL | re.IGNORECASE).findall(mega3xsrc)
         progress.update( 80, "", "Getting video file from Mega3X", "" )
         mega3xujs = unpack(mega3xjs[0])
@@ -307,16 +440,7 @@ def playvideo(videosource, name, download=None, url=None):
     elif vidhost == 'StreamCloud':
         progress.update( 40, "", "Opening Streamcloud", "" )
         streamcloudurl = re.compile(r"//(?:www\.)?streamcloud\.eu?/([0-9a-zA-Z-_/.]+html)", re.DOTALL | re.IGNORECASE).findall(videosource)
-        streamcloudlist = list(set(streamcloudurl))
-        if len(streamcloudlist) > 1:
-            i = 1
-            hashlist = []
-            for x in streamcloudlist:
-                hashlist.append('Video ' + str(i))
-                i += 1
-            scvideo = dialog.select('Multiple videos found', hashlist)
-            streamcloudurl = streamcloudlist[scvideo]
-        else: streamcloudurl = streamcloudurl[0]         
+        streamcloudurl = chkmultivids(streamcloudurl)        
         streamcloudurl = "http://streamcloud.eu/" + streamcloudurl
         progress.update( 50, "", "Getting Streamcloud page", "" )
         schtml = postHtml(streamcloudurl)
@@ -326,7 +450,50 @@ def playvideo(videosource, name, download=None, url=None):
             form_values[name] = value.replace("download1","download2")
         progress.update( 60, "", "Grabbing video file", "" )    
         newscpage = postHtml(streamcloudurl, form_data=form_values)
-        videourl = re.compile('file: "(.+?)",', re.DOTALL | re.IGNORECASE).findall(newscpage)[0]  
+        videourl = re.compile('file: "(.+?)",', re.DOTALL | re.IGNORECASE).findall(newscpage)[0]
+    elif vidhost == 'Jetload':
+        progress.update( 40, "", "Loading Jetload", "" )
+        jlurl = re.compile(r'jetload\.tv/([^"]+)', re.DOTALL | re.IGNORECASE).findall(videosource)
+        jlurl = chkmultivids(jlurl)
+        jlurl = "http://jetload.tv/" + jlurl
+        jlsrc = getHtml(jlurl, url)
+        videourl = re.compile(r'file: "([^"]+)', re.DOTALL | re.IGNORECASE).findall(jlsrc)
+        videourl = videourl[0]
+    elif vidhost == 'Videowood':
+        progress.update( 40, "", "Loading Videowood", "" )
+        vwurl = re.compile(r"//(?:www\.)?videowood\.tv/(?:embed|video)/([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
+        vwurl = chkmultivids(vwurl)
+        vwurl = 'http://www.videowood.tv/embed/' + vwurl
+        vwsrc = getHtml(vwurl, url)
+        progress.update( 80, "", "Getting video file from Videowood", "" )
+        videourl = videowood(vwsrc)
+    elif vidhost == 'Keeplinks <--':
+        progress.update( 40, "", "Loading Keeplinks", "" )
+        klurl = re.compile(r"//(?:www\.)?keeplinks\.eu/p1/([0-9a-zA-Z]+)", re.DOTALL | re.IGNORECASE).findall(videosource)
+        klurl = chkmultivids(klurl)
+        klurl = 'http://www.keeplinks.eu/p1/' + klurl
+        kllink = getVideoLink(klurl, '')
+        kllinkid = kllink.split('/')[-1]
+        klheader = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
+           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+           'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.3',
+           'Accept-Encoding': 'none',
+           'Accept-Language': 'en-US,en;q=0.8',
+           'Connection': 'keep-alive',
+           'Cookie': 'flag['+kllinkid+'] = 1;'} 
+        klpage = getHtml(kllink, klurl, klheader)
+        playvideo(klpage, name, download, klurl)
+        return
+    elif vidhost == 'Streamdefence':
+        progress.update( 40, "", "Loading Streamdefence", "" )
+        sdurl = re.compile(r'streamdefence\.com/view.php\?ref=([^"]+)"', re.DOTALL | re.IGNORECASE).findall(videosource)
+        sdurl = chkmultivids(sdurl)
+        sdurl = 'http://www.streamdefence.com/view.php?ref=' + sdurl
+        sdsrc = getHtml(sdurl, url)
+        progress.update( 80, "", "Getting video file from Streamdefence", "" )
+        sdpage = streamdefence(sdsrc)
+        playvideo(sdpage, name, download, sdurl)
+        return
     progress.close()
     playvid(videourl, name, download)
 
@@ -340,22 +507,20 @@ def playvid(videourl, name, download=None):
         listitem.setInfo('video', {'Title': name, 'Genre': 'Porn'})
         xbmc.Player().play(videourl, listitem)
 
-def playvideoUrlResolver(videosource, pattern, host):
-    import urlresolver
-    resolveurl = re.compile(pattern, re.DOTALL | re.IGNORECASE).findall(videosource)
-    resolvelist = list(set(resolveurl))
-    if len(resolvelist) > 1:
+
+def chkmultivids(videomatch):
+    videolist = list(set(videomatch))
+    if len(videolist) > 1:
         i = 1
         hashlist = []
-        for x in resolvelist:
+        for x in videolist:
             hashlist.append('Video ' + str(i))
             i += 1
-        olvideo = dialog.select('Multiple videos found', hashlist)
-        resolveurl = resolvelist[olvideo]
-    else: resolveurl = resolveurl[0]        
-    resolveurl1 = host % resolveurl
-    print "Resolving: " + resolveurl1
-    return urlresolver.resolve(resolveurl1)
+        mvideo = dialog.select('Multiple videos found', hashlist)
+        return videolist[mvideo]
+    else:
+        return videomatch[0]
+
 
 def PlayStream(name, url):
     item = xbmcgui.ListItem(name, path = url)
@@ -363,7 +528,7 @@ def PlayStream(name, url):
     return
 
 
-def getHtml(url, referer, hdr=None, NoCookie=None, data=None):
+def getHtml(url, referer='', hdr=None, NoCookie=None, data=None):
     if not hdr:
         req = Request(url, data, headers)
     else:
@@ -436,7 +601,8 @@ def cleantext(text):
     return text
 
 
-def addDownLink(name, url, mode, iconimage, desc, stream=None, fav='add'):
+def addDownLink(name, url, mode, iconimage, desc, stream=None, fav='add', noDownload=False):
+    contextMenuItems = []
     if fav == 'add': favtext = "Add to"
     elif fav == 'del': favtext = "Remove from"
     u = (sys.argv[0] +
@@ -458,14 +624,21 @@ def addDownLink(name, url, mode, iconimage, desc, stream=None, fav='add'):
     ok = True
     liz = xbmcgui.ListItem(name, iconImage="DefaultVideo.png", thumbnailImage=iconimage)
     liz.setArt({'thumb': iconimage, 'icon': iconimage})
+    fanart = os.path.join(rootDir, 'fanart.jpg')
+    if addon.getSetting('posterfanart') == 'true':
+        fanart = iconimage
+        liz.setArt({'poster': iconimage})
+    liz.setArt({'fanart': fanart})
     if stream:
         liz.setProperty('IsPlayable', 'true')
     if len(desc) < 1:
         liz.setInfo(type="Video", infoLabels={"Title": name})
     else:
         liz.setInfo(type="Video", infoLabels={"Title": name, "plot": desc, "plotoutline": desc})
-    liz.addContextMenuItems([('[COLOR hotpink]Download Video[/COLOR]', 'xbmc.RunPlugin('+dwnld+')'),
-    ('[COLOR hotpink]' + favtext + ' favorites[/COLOR]', 'xbmc.RunPlugin('+favorite+')')])
+    contextMenuItems.append(('[COLOR hotpink]' + favtext + ' favorites[/COLOR]', 'xbmc.RunPlugin('+favorite+')'))
+    if noDownload == False:
+        contextMenuItems.append(('[COLOR hotpink]Download Video[/COLOR]', 'xbmc.RunPlugin('+dwnld+')'))
+    liz.addContextMenuItems(contextMenuItems, replaceItems=False)
     ok = xbmcplugin.addDirectoryItem(handle=addon_handle, url=u, listitem=liz, isFolder=False)
     return ok
     
@@ -482,6 +655,11 @@ def addDir(name, url, mode, iconimage, page=None, channel=None, section=None, ke
     ok = True
     liz = xbmcgui.ListItem(name, iconImage="DefaultFolder.png", thumbnailImage=iconimage)
     liz.setArt({'thumb': iconimage, 'icon': iconimage})
+    fanart = os.path.join(rootDir, 'fanart.jpg')
+    if addon.getSetting('posterfanart') == 'true':
+        fanart = iconimage
+        liz.setArt({'poster': iconimage})
+    liz.setArt({'fanart': fanart})
     liz.setInfo(type="Video", infoLabels={"Title": name})
     ok = xbmcplugin.addDirectoryItem(handle=addon_handle, url=u, listitem=liz, isFolder=Folder)
     return ok
@@ -495,13 +673,85 @@ def _get_keyboard(default="", heading="", hidden=False):
     return default
  
  
-# function decodeOpenload(html) provide html from embedded openload page, gives back the video url
-# if you want to use this, ask me nice :)
-exec("import re;import base64");exec((lambda p,y:(lambda o,b,f:re.sub(o,b,f))(r"([0-9a-f]+)",lambda m:p(m,y),base64.b64decode("NDIgNTAoMjMpOgoKCSMgNTAgMzggNDYgMjYsIDJjIDM3IDM5IDNkIDJmIDJlIDI5IDopCgkxNSA9IDQ3LmIoMjUiPDEyKD86LnxcMzIpKj88MTZcMzJbXj5dKj8+KCg/Oi58XDMyKSo/KTwvMTYiLCAyMywgNDcuNTEgfCA0Ny4zMCkuNTIoMSkKCgkxNSA9IDE1LjM2KCIxZCIsIiIpCgkxNSA9IDE1LjM2KCIoNDAgKyA0MCArIDRlKSIsICI5IikKCTE1ID0gMTUuMzYoIig0MCArIDQwKSIsIjgiKQoJMTUgPSAxNS4zNigiKDQwICsgKDFhXjMzXjFhKSkiLCI3IikKCTE1ID0gMTUuMzYoIigoMWFeMzNeMWEpICsoMWFeMzNeMWEpKSIsIjYiKQoJMTUgPSAxNS4zNigiKDQwICsgNGUpIiwiNSIpCgkxNSA9IDE1LjM2KCI0MCIsIjQiKQoJMTUgPSAxNS4zNigiKCgxYV4zM14xYSkgLSA0ZSkiLCIyIikKCTE1ID0gMTUuMzYoIigxYV4zM14xYSkiLCIzIikKCTE1ID0gMTUuMzYoIjRlIiwiMSIpCgkxNSA9IDE1LjM2KCIoKyErW10pIiwiMSIpCgkxNSA9IDE1LjM2KCIoY14zM14xYSkiLCIwIikKCTE1ID0gMTUuMzYoIigwKzApIiwiMCIpCgkxNSA9IDE1LjM2KCIxNCIsIlxcIikgIAoJMTUgPSAxNS4zNigiKDMgKzMgKzApIiwiNiIpCgkxNSA9IDE1LjM2KCIoMyAtIDEgKzApIiwiMiIpCgkxNSA9IDE1LjM2KCIoIStbXSshK1tdKSIsIjIiKQoJMTUgPSAxNS4zNigiKC1+LX4yKSIsIjQiKQoJMTUgPSAxNS4zNigiKC1+LX4xKSIsIjMiKQoJMTUgPSAxNS4zNigiKC1+MCkiLCIxIikKCTE1ID0gMTUuMzYoIigtfjEpIiwiMiIpCgkxNSA9IDE1LjM2KCIoLX4zKSIsIjQiKQoJMTUgPSAxNS4zNigiKDAtMCkiLCIwIikKCQoJMTggPSA0Ny5iKDI1IlxcXCsoW14oXSspIiwgMTUsIDQ3LjUxIHwgNDcuMzApLjUyKDEpCgkxOCA9ICJcXCsiKyAxOAoJMTggPSAxOC4zNigiKyIsIiIpCgkxOCA9IDE4LjM2KCIgIiwiIikKCQoJMTggPSAzMSgxOCkKCTE4ID0gMTguMzYoIlxcLyIsIi8iKQoJCgkzYSAnMTEnIDJhIDE4OgoJCTEwID0gNDcuNDgoMjUiMTFcKGFcKyhcZCspIiwgNDcuNTEgfCA0Ny4zMCkuM2UoMTgpWzBdCgkJMTAgPSAyMigxMCkKCQkyMCA9IDQ3LjQ4KDI1IihcKFxkW14pXStcKSkiLCA0Ny41MSB8IDQ3LjMwKS4zZSgxOCkKCQkyZiAxYyAyYSAyMDoKCQkJZiA9IDQ3LjQ4KDI1IihcZCspLChcZCspIiwgNDcuNTEgfCA0Ny4zMCkuM2UoMWMpCgkJCTFmID0gMTAgKyAyMihmWzBdWzBdKQoJCQkxZSA9IDIxKDIyKGZbMF1bMV0pLDFmKQoJCQkxOCA9IDE4LjM2KDFjLDFlKQoJCTE4ID0gMTguMzYoIisiLCIiKQoJCTE4ID0gMTguMzYoIlwiIiwiIikKCQk0OSA9IDQ3LmIoMjUiKDNiW15cfV0rKSIsIDE4LCA0Ny41MSB8IDQ3LjMwKS41MigxKQoJMjQ6CgkJNDkgPSA0Ny5iKDI1IjQ0XDMyPz1cMzI/XCJ8JyhbXlwiJ10rKSIsIDE4LCA0Ny41MSB8IDQ3LjMwKS41MigxKQoJCgkxOSA9ICIxNy4xMi4iICsgIjRiIiArICI0ZiIgKyAiYyIKCTJkID0gIjE3LjEyLiIgKyAiNGMiICsgIjFhIiArICIyNSIgKyAiNTMiICsgImEiICsgImUiICsgIjRhIgoJCgkzYSAxOSAyYSAzNS4xYignM2MnKToKCQk0ZCA9IDQ5CgkyNDoKCQk0ZCA9ICIzNDovLzQzLjI3LjNmLzMyLzEzLzJiLjQxPzQ1PTEiCgkyOCA0ZA==")))(lambda a,b:b[int("0x"+a.group(1),16)],"0|1|2|3|4|5|6|7|8|9|a|search|c|d|e|match1|base|toString|video|2ds5o61a22srpob|(ﾟДﾟ)[ﾟεﾟ]|aastring|script|plugin|decodestring|check1|o|getAddonInfo|repl|(ﾟДﾟ)[ﾟεﾟ]+(oﾟｰﾟo)+ ((c^_^o)-(c^_^o))+ (-~0)+ (ﾟДﾟ) ['c']+ (-~-~1)+|repl2|base2|match|base10toN|int|html|else|r|mortael|dropbox|return|credit|in|ahahah|please|check2|proper|for|IGNORECASE|decode|s|_|https|addon|replace|leave|made|this|if|http|path|line|findall|com|(ﾟｰﾟ)|mp4|def|www|vr|dl|by|re|compile|videourl|l|u|m|videourl2|(ﾟΘﾟ)|w|decodeOpenLoad|DOTALL|group|t".split("|")))
+def decodeOpenLoad(html):
 
+    # decodeOpenLoad made by mortael, please leave this line for proper credit :)
+    aastring = re.compile("<script[^>]+>(ﾟωﾟﾉ[^<]+)<", re.DOTALL | re.IGNORECASE).findall(html)
+    #haha = re.compile(r"welikekodi_ya_rly = (\d+) - (\d+)", re.DOTALL | re.IGNORECASE).findall(html)
+    #haha = int(haha[0][0]) - int(haha[0][1])
 
+    #if haha == 1:
+    #    haha2 = 2
+    #else:
+    #    haha2 = 1
+    
+    videourl1 = decodeOpenLoad2(aastring[0])
+    #videourl2 = decodeOpenLoad2(aastring[haha2])
 
-
+    #xbmc.log(videourl1)
+    #xbmc.log(videourl2)
+    return videourl1
+    
+    
+def decodeOpenLoad2(aastring):
+    aastring = aastring.replace("(ﾟДﾟ)[ﾟεﾟ]+(oﾟｰﾟo)+ ((c^_^o)-(c^_^o))+ (-~0)+ (ﾟДﾟ) ['c']+ (-~-~1)+","")
+    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟｰﾟ) + (ﾟΘﾟ))", "9")
+    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟｰﾟ))","8")
+    aastring = aastring.replace("((ﾟｰﾟ) + (o^_^o))","7")
+    aastring = aastring.replace("((o^_^o) +(o^_^o))","6")
+    aastring = aastring.replace("((ﾟｰﾟ) + (ﾟΘﾟ))","5")
+    aastring = aastring.replace("(ﾟｰﾟ)","4")
+    aastring = aastring.replace("((o^_^o) - (ﾟΘﾟ))","2")
+    aastring = aastring.replace("(o^_^o)","3")
+    aastring = aastring.replace("(ﾟΘﾟ)","1")
+    aastring = aastring.replace("(+!+[])","1")
+    aastring = aastring.replace("(c^_^o)","0")
+    aastring = aastring.replace("(0+0)","0")
+    aastring = aastring.replace("(ﾟДﾟ)[ﾟεﾟ]","\\")
+    aastring = aastring.replace("(3 +3 +0)","6")
+    aastring = aastring.replace("(3 - 1 +0)","2")
+    aastring = aastring.replace("(!+[]+!+[])","2")
+    aastring = aastring.replace("(-~-~2)","4")
+    aastring = aastring.replace("(-~-~1)","3")
+    aastring = aastring.replace("(-~0)","1")
+    aastring = aastring.replace("(-~1)","2")
+    aastring = aastring.replace("(-~3)","4")
+    aastring = aastring.replace("(0-0)","0")
+    
+    decodestring = re.search(r"\\\+([^(]+)", aastring, re.DOTALL | re.IGNORECASE).group(1)
+    decodestring = "\\+"+ decodestring
+    decodestring = decodestring.replace("+","")
+    decodestring = decodestring.replace(" ","")
+    
+    decodestring = decode(decodestring)
+    decodestring = decodestring.replace("\\/","/")
+    
+    if 'toString' in decodestring:
+        base = re.compile(r"toString\(a\+(\d+)", re.DOTALL | re.IGNORECASE).findall(decodestring)[0]
+        base = int(base)
+        match = re.compile(r"(\(\d[^)]+\))", re.DOTALL | re.IGNORECASE).findall(decodestring)
+        for repl in match:
+            match1 = re.compile(r"(\d+),(\d+)", re.DOTALL | re.IGNORECASE).findall(repl)
+            base2 = base + int(match1[0][0])
+            repl2 = base10toN(int(match1[0][1]),base2)
+            decodestring = decodestring.replace(repl,repl2)
+        decodestring = decodestring.replace("+","")
+        decodestring = decodestring.replace("\"","")
+        #xbmc.log(decodestring)
+        videourl = re.search(r"(http[^\}]+)", decodestring, re.DOTALL | re.IGNORECASE).group(1)
+        videourl = videourl.replace("https","http")
+    else:
+        videourl = re.search(r"vr\s?=\s?\"|'([^\"']+)", decodestring, re.DOTALL | re.IGNORECASE).group(1)
+        
+    UA = 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:39.0) Gecko/20100101 Firefox/39.0'
+    headers = {'User-Agent': UA }
+    
+    req = urllib2.Request(videourl,None,headers)
+    res = urllib2.urlopen(req)
+    videourl = res.geturl()
+    
+    
+    return videourl
 
 def decode(encoded):
     for octc in (c for c in re.findall(r'\\(\d{2,3})', encoded)):
@@ -551,14 +801,93 @@ def base10toN(num,n):
     return new_num_string
 
 
-def searchDir(url, mode):
+# videowood decode copied from: https://github.com/schleichdi2/OpenNfr_E2_Gui-5.3/blob/4e3b5e967344c3ddc015bc67833a5935fc869fd4/lib/python/Plugins/Extensions/MediaPortal/resources/hosters/videowood.py    
+def videowood(data):
+    parse = re.search('(....ωﾟ.*?);</script>', data)
+    if parse:
+        todecode = parse.group(1).split(';')
+        todecode = todecode[-1].replace(' ','')
+
+        code = {
+            "(ﾟДﾟ)[ﾟoﾟ]" : "o",
+            "(ﾟДﾟ) [return]" : "\\",
+            "(ﾟДﾟ) [ ﾟΘﾟ]" : "_",
+            "(ﾟДﾟ) [ ﾟΘﾟﾉ]" : "b",
+            "(ﾟДﾟ) [ﾟｰﾟﾉ]" : "d",
+            "(ﾟДﾟ)[ﾟεﾟ]": "/",
+            "(oﾟｰﾟo)": '(u)',
+            "3ﾟｰﾟ3": "u",
+            "(c^_^o)": "0",
+            "(o^_^o)": "3",
+            "ﾟεﾟ": "return",
+            "ﾟωﾟﾉ": "undefined",
+            "_": "3",
+            "(ﾟДﾟ)['0']" : "c",
+            "c": "0",
+            "(ﾟΘﾟ)": "1",
+            "o": "3",
+            "(ﾟｰﾟ)": "4",
+            }
+        cryptnumbers = []
+        for searchword,isword in code.iteritems():
+            todecode = todecode.replace(searchword,isword)
+        for i in range(len(todecode)):
+            if todecode[i:i+2] == '/+':
+                for j in range(i+2, len(todecode)):
+                    if todecode[j:j+2] == '+/':
+                        cryptnumbers.append(todecode[i+1:j])
+                        i = j
+                        break
+                        break
+        finalstring = ''
+        for item in cryptnumbers:
+            chrnumber = '\\'
+            jcounter = 0
+            while jcounter < len(item):
+                clipcounter = 0
+                if item[jcounter] == '(':
+                    jcounter +=1
+                    clipcounter += 1
+                    for k in range(jcounter, len(item)):
+                        if item[k] == '(':
+                            clipcounter += 1
+                        elif item[k] == ')':
+                            clipcounter -= 1
+                        if clipcounter == 0:
+                            jcounter = 0
+                            chrnumber = chrnumber + str(eval(item[:k+1]))
+                            item = item[k+1:]
+                            break
+                else:
+                    jcounter +=1
+            finalstring = finalstring + chrnumber.decode('unicode-escape')
+        stream_url = re.search('=\s*(\'|")(.*?)$', finalstring)
+        if stream_url:
+            return stream_url.group(2)
+    else:
+        return
+
+
+def streamdefence(html):
+    if 'openload' in html:
+        return html
+    match = re.search(r'\("([^"]+)', html, re.DOTALL | re.IGNORECASE)
+    if match:
+        result = match.group()
+        decoded = base64.b64decode(result)
+    else:
+        decoded = base64.b64decode(html)
+    return streamdefence(decoded)
+        
+        
+def searchDir(url, mode, page=None):
     conn = sqlite3.connect(favoritesdb)
     c = conn.cursor()
     try:
         c.execute("SELECT * FROM keywords")
         for (keyword,) in c.fetchall():
             name = '[COLOR deeppink]' + urllib.unquote_plus(keyword) + '[/COLOR]'
-            addDir(name, url, mode, '', keyword=keyword)
+            addDir(name, url, mode, '', page=page, keyword=keyword)
     except: pass
     addDir('[COLOR hotpink]Add Keyword[/COLOR]', url, 902, '', '', mode, Folder=False)
     addDir('[COLOR hotpink]Clear list[/COLOR]', '', 903, '', Folder=False)
