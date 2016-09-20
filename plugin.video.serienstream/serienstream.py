@@ -12,8 +12,6 @@ UNSUPPORTED_HOSTS = [ 'NowVideo', 'Shared', 'FileNuke', 'CloudTime', 'PowerWatch
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
 sys.path.append(os.path.join(addon.getAddonInfo('path'), "lib" ) )
 
-cloudfareSupport = addon.getSetting("cloudfare")
-
 import cfscrape
 
 def notify(header=None, msg='', duration=5000):
@@ -23,8 +21,6 @@ def notify(header=None, msg='', duration=5000):
 
 
 def update_cloudfare():
-    if not cloudfareSupport:
-        return "", ""
     filename = os.path.join(xbmc.translatePath(addon.getAddonInfo('profile')), 'cloudfare.txt')
     if os.path.isfile(filename) and (time.time() - os.path.getmtime(filename) < 3600):
         f = open(filename,'r')
@@ -86,17 +82,7 @@ def REFRESH(url):
         notify("Oh oh", "")
         return ""
 
-def ADD_ENTRY(name, category, url):
-    item = xbmcgui.ListItem(name)
-    uri = sys.argv[0] + '?mode=' + category + '&url=' + url
-    xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
-        
 def getIndex():
-    ADD_ENTRY('Genres', 'GENRES', 'none')
-    ADD_ENTRY('Neu', 'CATEGORY', 'http://serienstream.to/#neu')
-    xbmcplugin.endOfDirectory(pluginhandle, True)   
-        
-def getGenres():
     html = GET('http://serienstream.to/serien')
     match = re.compile('<li><a href="(http://serienstream.to/genre/.+?)">(.+?)</a>').findall(html)
     for url, category in match:
