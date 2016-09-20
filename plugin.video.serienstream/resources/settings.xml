@@ -1,0 +1,3 @@
+<settings>
+   <setting id="cloudfare" label="30000" type="bool" default="false" />
+</settings>
