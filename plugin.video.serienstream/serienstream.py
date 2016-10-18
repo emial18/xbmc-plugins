@@ -12,6 +12,8 @@ UNSUPPORTED_HOSTS = [ 'NowVideo', 'Shared', 'FileNuke', 'CloudTime', 'PowerWatch
 addon = xbmcaddon.Addon(id='plugin.video.serienstream')
 sys.path.append(os.path.join(addon.getAddonInfo('path'), "lib" ) )
 
+cloudfareSupport = addon.getSetting("cloudfare")
+
 import cfscrape
 
 def notify(header=None, msg='', duration=5000):
@@ -21,6 +23,8 @@ def notify(header=None, msg='', duration=5000):
 
 
 def update_cloudfare():
+    if not cloudfareSupport:
+        return "", ""
     filename = os.path.join(xbmc.translatePath(addon.getAddonInfo('profile')), 'cloudfare.txt')
     if os.path.isfile(filename) and (time.time() - os.path.getmtime(filename) < 3600):
         f = open(filename,'r')
@@ -31,7 +35,7 @@ def update_cloudfare():
         return cookie_value, user_agent
     else:
         notify("Okay", "Get Cloudflare token")
-        cookie_value, user_agent = cfscrape.get_cookie_string("http://serienstream.to")
+        cookie_value, user_agent = cfscrape.get_cookie_string("https://serienstream.to")
         f = open(filename,'w')
         f.write(cookie_value + '\n')
         f.write(user_agent + '\n')
@@ -42,8 +46,9 @@ def GET(url):
     print "serienstream::GET " + url
     try:
         req = urllib2.Request(url)
-        req.add_header('User-Agent', user_agent)
-        req.add_header('Cookie', cookie_value)
+        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
+        #req.add_header('User-Agent', user_agent)
+        #req.add_header('Cookie', cookie_value)
         response = urllib2.urlopen(req, timeout = 30)
         link = response.read()
         response.close()
@@ -82,23 +87,34 @@ def REFRESH(url):
         notify("Oh oh", "")
         return ""
 
+def ADD_ENTRY(name, category, url):
+    item = xbmcgui.ListItem(name)
+    uri = sys.argv[0] + '?mode=' + category + '&url=' + url
+    xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
+        
 def getIndex():
-    html = GET('http://serienstream.to/serien')
-    match = re.compile('<li><a href="(http://serienstream.to/genre/.+?)">(.+?)</a>').findall(html)
+    ADD_ENTRY('Genres', 'GENRES', 'none')
+    ADD_ENTRY('Neu', 'CATEGORY', 'http://serienstream.to/#neu')
+    ADD_ENTRY('Beliebt', 'CATEGORY', 'http://serienstream.to/#beliebt')
+    xbmcplugin.endOfDirectory(pluginhandle, True)   
+        
+def getGenres():
+    html = GET('http://serienstream.to/')
+    match = re.compile('<a title=".+?".+?href="http://serienstream.to/genre/(.+?)">(.+?)</a>', re.DOTALL).findall(html)
     for url, category in match:
         item = xbmcgui.ListItem(category)
-        uri = sys.argv[0] + '?mode=CATEGORY' + '&url=' + url
+        uri = sys.argv[0] + '?mode=CATEGORY' + '&url=http://serienstream.to/genre/' + url
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
 
 def getCategory(url):
     print "getCatalog: " + url
     html = GET(url)
-    match = re.compile('<a href="(http://serienstream.to/serie/stream/.+?)".+?<img.+?src="(.+?)".+?<h3>(.+?)</h3>', re.DOTALL).findall(html)
+    match = re.compile('<a href="/serie/stream/(.+?)".+?title=".+?">.+?<img.+?src="(.+?)".+?title=".+?".+?alt=".+?">.+?<h3>(.+?)<span', re.DOTALL).findall(html)
     for link, img, title in match:
         item = xbmcgui.ListItem(title)
         item.setIconImage(img)
-        uri = sys.argv[0] + '?mode=SERIES' + '&url=' + link + "&img=" + img
+        uri = sys.argv[0] + '?mode=SERIES' + '&url=http://serienstream.to/serie/stream/' + link + "&img=http://serienstream.to/" + img
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
 
@@ -145,7 +161,7 @@ def play(url, name):
     utils.progress.create('Play video', 'Searching videofile.')
     utils.progress.update( 10, "", "Loading video page", "" )
     html = GET(url)
-    match = re.compile('<a href="(.+?)" target="_blank">\s+<i class="icon .+?" title="Icon (.+?)"></i>').findall(html)
+    match = re.compile('<li class="col-md-4.+?<a href="(.+?)" target="_blank">.+?<i class="icon (.+?)"', re.DOTALL).findall(html)
     sources = ""
     for videopage, host in match:
         if not host in UNSUPPORTED_HOSTS:
@@ -156,4 +172,4 @@ def play(url, name):
     else:
         utils.playvideo(sources, name)
 
-cookie_value, user_agent = update_cloudfare()
+#cookie_value, user_agent = update_cloudfare()
