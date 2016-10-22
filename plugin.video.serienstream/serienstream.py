@@ -21,10 +21,9 @@ def notify(header=None, msg='', duration=5000):
     builtin = "XBMC.Notification(%s,%s, %s, %s)" % (header, msg, duration, xbmc.translatePath(os.path.join(addon.getAddonInfo('path'), 'icon.png')))
     xbmc.executebuiltin(builtin)
 
-
 def update_cloudfare():
     if not cloudfareSupport:
-        return "", ""
+        return "", 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0'
     filename = os.path.join(xbmc.translatePath(addon.getAddonInfo('profile')), 'cloudfare.txt')
     if os.path.isfile(filename) and (time.time() - os.path.getmtime(filename) < 3600):
         f = open(filename,'r')

@@ -53,6 +53,7 @@ except: pass
 
 if mode == 'SEARCH':  serienstream.search()
 if mode == 'CATEGORY': serienstream.getCategory(url)
+if mode == 'GENRES': serienstream.getGenres()
 if mode == 'SERIES':   serienstream.getSeries(url, img)
 if mode == 'SEASON':   serienstream.getSeason(url, season, img)
 if mode == 'PLAY':     serienstream.play(url, name)
