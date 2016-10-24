@@ -45,9 +45,9 @@ def GET(url):
     print "serienstream::GET " + url
     try:
         req = urllib2.Request(url)
-        req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
-        #req.add_header('User-Agent', user_agent)
-        #req.add_header('Cookie', cookie_value)
+        #req.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 6.1; rv:11.0) Gecko/20100101 Firefox/11.0')
+        req.add_header('User-Agent', user_agent)
+        req.add_header('Cookie', cookie_value)
         response = urllib2.urlopen(req, timeout = 30)
         link = response.read()
         response.close()
@@ -171,4 +171,4 @@ def play(url, name):
     else:
         utils.playvideo(sources, name)
 
-#cookie_value, user_agent = update_cloudfare()
+cookie_value, user_agent = update_cloudfare()
