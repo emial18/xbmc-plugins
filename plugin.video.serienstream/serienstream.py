@@ -34,7 +34,7 @@ def update_cloudfare():
         return cookie_value, user_agent
     else:
         notify("Okay", "Get Cloudflare token")
-        cookie_value, user_agent = cfscrape.get_cookie_string("https://serienstream.to")
+        cookie_value, user_agent = cfscrape.get_cookie_string("http://serienstream.to")
         f = open(filename,'w')
         f.write(cookie_value + '\n')
         f.write(user_agent + '\n')
