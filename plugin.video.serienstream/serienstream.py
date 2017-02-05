@@ -112,7 +112,7 @@ def getCategory(url):
     match = re.compile('<a href="/serie/stream/(.+?)".+?title=".+?">.+?<img.+?src="(.+?)".+?title=".+?".+?alt=".+?">.+?<h3>(.+?)<span', re.DOTALL).findall(html)
     for link, img, title in match:
         item = xbmcgui.ListItem(title)
-        item.setIconImage(img)
+        item.setIconImage("http://serienstream.to/" + img)
         uri = sys.argv[0] + '?mode=SERIES' + '&url=http://serienstream.to/serie/stream/' + link + "&img=http://serienstream.to/" + img
         xbmcplugin.addDirectoryItem(pluginhandle, uri, item, True)
     xbmcplugin.endOfDirectory(pluginhandle, True)
@@ -126,8 +126,13 @@ def getSeries(url, img):
     for videopage, season in match:
         item = xbmcgui.ListItem('Staffel ' + season)
         plot = reDescription.findall(html)[0]
-        backdrop = reBackground.findall(html)[0]
-        item.setArt({ 'poster': img, 'fanart' : backdrop })
+        try:
+            backdrop = reBackground.findall(html)[0]
+            item.setArt({ 'poster': img, 'fanart' : backdrop })
+        except:
+            reAltBackground = re.compile('<div class="seriesCoverBox">.+?<img src="(.+?)"', re.DOTALL)
+            backdrop = reAltBackground.findall(html)[0]
+            item.setArt({ 'poster': img, 'fanart' : backdrop })
         item.setInfo('video', { 'plot': plot, 'plotoutline' : plot })
         item.setIconImage(img)
         uri = sys.argv[0] + '?mode=SEASON' + '&url=http://serienstream.to' + videopage + "&season=" + season + "&img=" + img
