@@ -99,7 +99,7 @@ def getIndex():
         
 def getGenres():
     html = GET('http://serienstream.to/')
-    match = re.compile('<a title=".+?".+?href="http://serienstream.to/genre/(.+?)">(.+?)</a>', re.DOTALL).findall(html)
+    match = re.compile('href="https://serienstream.to/genre/(.+?)">(.+?)</a>', re.DOTALL).findall(html)
     for url, category in match:
         item = xbmcgui.ListItem(category)
         uri = sys.argv[0] + '?mode=CATEGORY' + '&url=http://serienstream.to/genre/' + url
